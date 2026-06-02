@@ -1,0 +1,2 @@
+# BANDORI-GPT-SoVITS
+GPT-SoVITS files
