@@ -1,0 +1,31 @@
+"""Shared Windows API constants for DWM, SetWindowPos, and hit-testing."""
+# DWM window attributes
+DWMWA_WINDOW_CORNER_PREFERENCE = 33
+DWMWA_BORDER_COLOR = 34
+DWMWCP_DONOTROUND = 1
+DWMWA_COLOR_NONE = 0xFFFFFFFE
+
+# Window messages
+WM_NCCALCSIZE = 0x0083
+WM_NCHITTEST = 0x0084
+
+# Hit-test results
+HTTRANSPARENT = -1
+HTCLIENT = 1
+
+# SetWindowLong
+GWL_EXSTYLE = -20
+
+# Window Z-order
+HWND_TOPMOST = -1
+
+# Extended window styles
+WS_EX_TRANSPARENT = 0x00000020
+WS_EX_NOACTIVATE = 0x08000000
+
+# SetWindowPos flags
+SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
+SWP_NOZORDER = 0x0004
+SWP_NOACTIVATE = 0x0010
+SWP_FRAMECHANGED = 0x0020

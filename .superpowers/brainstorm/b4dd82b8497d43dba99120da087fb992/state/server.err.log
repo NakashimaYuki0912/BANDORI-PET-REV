@@ -1,0 +1,20 @@
+  const result = binding.mkdir(
+    at Module._compile (node:internal/modules/cjs/loader:1812:14)
+    at Module.load (node:internal/modules/cjs/loader:1533:32)
+    at Object..js (node:internal/modules/cjs/loader:1943:10)
+    at Module._load (node:internal/modules/cjs/loader:1335:12)
+node:fs:1349
+    at node:internal/main/run_main_module:33:47 {
+  errno: -4048,
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+  syscall: 'mkdir',
+}
+  code: 'EPERM',
+    at startServer (C:\Users\13034\.agents\skills\brainstorming\scripts\server.cjs:263:39)
+  path: 'C:\\tmp\\brainstorm\\content'
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Object.<anonymous> (C:\Users\13034\.agents\skills\brainstorming\scripts\server.cjs:351:3)
+Node.js v24.14.0
+                         ^
+    at Object.mkdirSync (node:fs:1349:26)
+Error: EPERM: operation not permitted, mkdir 'C:\tmp\brainstorm\content'
