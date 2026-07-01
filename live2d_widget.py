@@ -50,7 +50,7 @@ class Live2DWidget(QOpenGLWidget):
         self._drag_locked = False
         self._initialized_gl = False
         
-        self._fps = 120
+        self._fps = 60
         self._vsync = True
         self._static_render = False
         self._static_render_done = False
@@ -113,6 +113,7 @@ class Live2DWidget(QOpenGLWidget):
         self._cache_h_half = 0.5
         self._cache_global_x = 0
         self._cache_global_y = 0
+        self._cached_move_dpr = -1.0
         self._last_cursor_x = -1
         self._last_cursor_y = -1
         self._head_track_min_delta_sq = 16
@@ -361,7 +362,10 @@ class Live2DWidget(QOpenGLWidget):
 
     def moveEvent(self, event: QMoveEvent):
         self._update_global_pos_cache()
-        self._refresh_system_scale()
+        dpr = self.devicePixelRatioF()
+        if dpr > 0 and abs(dpr - self._cached_move_dpr) >= 1e-6:
+            self._cached_move_dpr = dpr
+            self._refresh_system_scale()
         super().moveEvent(event)
 
     def resizeEvent(self, event: QResizeEvent):
@@ -435,25 +439,6 @@ class Live2DWidget(QOpenGLWidget):
         new_scale = self._current_device_pixel_ratio()
         if not force and abs(new_scale - self._system_scale) < 1e-6:
             return
-        # ── 临时日志：跨屏 DPR 验证 ──
-        try:
-            win = self.window()
-            wh = win.windowHandle() if win else None
-            screen = wh.screen() if wh else None
-            screen_name = screen.name() if screen else "?"
-            screen_dpr = screen.devicePixelRatio() if screen else 0.0
-            print(
-                f"[Live2DWidget._refresh_system_scale] force={force} "
-                f"screen={screen_name} screen_dpr={screen_dpr:.2f} "
-                f"widget_dpr={self.devicePixelRatioF():.2f} "
-                f"old_scale={self._system_scale:.2f} new_scale={new_scale:.2f} "
-                f"widget_size=({self._cache_w},{self._cache_h}) "
-                f"viewport=({int(self._cache_w * new_scale)},{int(self._cache_h * new_scale)})",
-                flush=True,
-            )
-        except Exception:
-            pass
-        # ── 日志结束 ──
         self._system_scale = new_scale
         self._clear_hit_framebuffer_cache()
         self._apply_gl_viewport()

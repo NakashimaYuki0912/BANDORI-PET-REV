@@ -403,6 +403,7 @@ class LuaLAppModel:
         self.matrixManager = _MatrixManager()
         self.expressions = {}
         self._pending_parameters = {}
+        self._draw_opts = None
 
     def LoadModelJson(self, model_json_path: str, disable_precision=False):
         del disable_precision
@@ -433,9 +434,12 @@ class LuaLAppModel:
     def Draw(self):
         if self._renderer is None:
             return
-        opts = self._module._lua.table()
+        if self._draw_opts is None:
+            self._draw_opts = self._module._lua.table()
+        opts = self._draw_opts
         opts[b"clear"] = False
         opts[b"time_msec"] = time.monotonic() * 1000.0
+        opts[b"parameters"] = None
         if self._pending_parameters:
             params = self._module._lua.table()
             for index, (param_id, value, weight) in enumerate(self._pending_parameters.values(), 1):

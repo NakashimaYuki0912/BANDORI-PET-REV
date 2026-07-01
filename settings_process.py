@@ -99,8 +99,6 @@ def main():
     ipc_socket.connectToServer(ipc_server_name())
 
     def send_ipc_line(line: str):
-        if line.startswith("MODEL\t") and args.show_launch == "0":
-            line += "\tRELAUNCH"
         if ipc_socket.state() == QLocalSocket.LocalSocketState.UnconnectedState:
             ipc_socket.connectToServer(ipc_server_name())
         if ipc_socket.state() != QLocalSocket.LocalSocketState.ConnectedState:

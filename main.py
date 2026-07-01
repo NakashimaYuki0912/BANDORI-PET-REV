@@ -89,7 +89,7 @@ def main():
         return 0
 
     mgr = ModelManager()
-    pet_window_ref = {"processes": []}
+    pet_window_ref = {"processes": [], "chars": set()}
     ipc_ref = {"clients": [], "buffers": {}}
     ai_status_ref = {"server": None}
     chat_integration_ref = {"server": None, "db": None, "lock": threading.RLock()}
@@ -478,11 +478,19 @@ def main():
 
     def on_model_selected(selected_char, selected_costume, relaunch=False):
         nonlocal char, costume
+        prev_char = pet_window_ref.get("char", "")
         char = selected_char
         costume = selected_costume
         pet_window_ref["char"] = selected_char
         pet_window_ref["costume"] = selected_costume
         if relaunch:
+            launch_pet()
+            return
+        is_same_char = selected_char == prev_char and selected_char in pet_window_ref.get("chars", set())
+        if is_same_char:
+            # Hot-swap: send MODEL to existing pet process for this character
+            broadcast_ipc_line(f"MODEL\t{selected_char}\t{selected_costume}")
+        else:
             launch_pet()
 
     def on_settings_changed(data):
@@ -668,6 +676,7 @@ def main():
                 models.append({"character": selected_char, "costume": selected_costume, "path": path})
         close_pet_processes()
         pet_window_ref["processes"] = []
+        pet_window_ref["chars"] = {m.get("character", "") for m in models}
         for idx, model in enumerate(models):
             process = QProcess(app)
             program, arguments = process_program_and_args(BASE_DIR, "pet_process.py", [

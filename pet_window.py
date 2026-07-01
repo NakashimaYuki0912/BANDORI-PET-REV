@@ -673,7 +673,7 @@ class PetWindow(QWidget):
         # Windows 11; keep hit sampling on the Qt timer path.
         self._use_native_hit_test_passthrough = False
         self._passthrough_timer = QTimer(self)
-        self._passthrough_timer.setInterval(100)
+        self._passthrough_timer.setInterval(200)
         self._passthrough_timer.timeout.connect(self._update_mouse_passthrough)
         self._context_idle_timer = QTimer(self)
         self._context_idle_timer.setInterval(LIVE2D_CONTEXT_IDLE_INTERVAL_MS)
@@ -1761,7 +1761,7 @@ class PetWindow(QWidget):
         Polling is adaptive: 150 ms at rest, 50 ms while the taskbar animates
         (only needed to catch direction reversals — the animation does the work).
         """
-        _POLL_IDLE = 50
+        _POLL_IDLE = 150
         _POLL_ACTIVE = 50
 
         if os.name != "nt" or not self._taskbar_snapped or self._is_pet_dragging():
@@ -2289,6 +2289,10 @@ class PetWindow(QWidget):
                 self._handle_chat_event(json.loads(line.split("\t", 1)[1]))
             except json.JSONDecodeError:
                 pass
+        elif line.startswith("MODEL\t"):
+            parts = line.split("\t", 2)
+            if len(parts) == 3 and parts[1] == self._current_char:
+                self._switch_model(parts[1], parts[2])
         elif line == "SHUTDOWN":
             self._quit()
 

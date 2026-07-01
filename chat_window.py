@@ -1,5 +1,5 @@
 import fluent_bootstrap  # noqa: F401
-from PySide6.QtCore import Qt, QObject, QThread, Signal, QTimer, QPropertyAnimation, QEasingCurve, QEvent, QRect, QRectF, QSize, QVariantAnimation, QParallelAnimationGroup
+from PySide6.QtCore import Qt, QObject, QThread, Signal, QTimer, QPropertyAnimation, QEasingCurve, QEvent, QRect, QRectF, QSize, QVariantAnimation, QParallelAnimationGroup, QRunnable, QThreadPool
 from PySide6.QtGui import QFont, QColor, QPalette, QIcon, QKeyEvent, QPainter, QPainterPath, QPen, QPixmap, QImage, QRegion
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -771,12 +771,13 @@ class GroupChatListRow(QWidget):
     selected = Signal(object)
     context_menu_requested = Signal(object, object)
 
-    def __init__(self, characters: list[str], title: str, preview: str, current: bool, parent=None):
+    def __init__(self, characters: list[str], title: str, preview: str, current: bool, group_key: str = "", parent=None):
         super().__init__(parent)
         self._characters = list(characters)
         self._title_text = title
         self._preview_text = preview
         self._current = current
+        self.group_key = group_key
         self._hovered = False
         self._pressed = False
         self._bg_color = QColor("transparent")
@@ -891,6 +892,17 @@ class GroupChatListRow(QWidget):
                 font-size: 11px;
             }}
         """)
+        self._update_elided_texts()
+        self.update()
+
+    def update_preview(self, title: str, preview: str, current: bool):
+        changed = (self._title_text != title or self._preview_text != preview or self._current != current)
+        if not changed:
+            return
+        self._title_text = title
+        self._preview_text = preview
+        self._current = current
+        self.apply_theme()
         self._update_elided_texts()
         self.update()
 
@@ -1702,6 +1714,35 @@ class MessageBubble(QWidget):
             self._container.set_wave_glow(False)
 
 
+class _DBWriteTask(QRunnable):
+    """Runs a single DB write on a background thread with its own connection."""
+
+    def __init__(self, fn, *args):
+        super().__init__()
+        self._fn = fn
+        self._args = args
+
+    def run(self):
+        from database_manager import DatabaseManager
+        db = DatabaseManager()
+        try:
+            self._fn(db, *self._args)
+        finally:
+            db.close()
+
+
+def _db_async_write(fn, *args):
+    QThreadPool.globalInstance().start(_DBWriteTask(fn, *args))
+
+
+def _do_add_message(db, conv_id, role, text, attachments=None, reasoning_content=None, tool_trace=None):
+    db.add_message(conv_id, role, text, reasoning_content=reasoning_content, tool_trace=tool_trace, attachments=attachments)
+
+
+def _do_add_group_message(db, conv_key, conv_id, role, text, attachments=None, reasoning_content=None, tool_trace=None):
+    db.add_group_message(conv_key, conv_id, role, text, reasoning_content=reasoning_content, tool_trace=tool_trace, attachments=attachments)
+
+
 class ChatWindow(QWidget):
     action_triggered = Signal(str, str)
     closed = Signal()
@@ -1736,6 +1777,10 @@ class ChatWindow(QWidget):
         self._tts_queue: list[tuple[int, str, str]] = []
         self._tts_active_workers: dict[int, TTSRequestWorker] = {}
         self._tts_translation_workers: dict[int, TTSTranslationWorker] = {}
+        self._sanitize_regex_cache: dict[tuple, object] = {}
+        self._config_last_mtime: float = 0.0
+        self._message_cache: list[dict] = []
+        self._relationship_cache: dict = {}
         self._tts_audio_buffers: dict[int, list[tuple[bytes, str]]] = {}
         self._tts_bubbles: dict[int, MessageBubble] = {}
         self._tts_characters: dict[int, str] = {}
@@ -2271,40 +2316,106 @@ class ChatWindow(QWidget):
         time_text = created_at[5:16] if len(created_at) >= 16 else created_at
         return f"{time_text}  {preview}".strip()
 
-    def _refresh_group_list(self):
+    def _refresh_group_list(self, full_rebuild: bool = False):
         if not hasattr(self, "_group_list_layout"):
             return
-        while self._group_list_layout.count():
-            item = self._group_list_layout.takeAt(0)
-            widget = item.widget() if item else None
-            if widget:
-                widget.deleteLater()
-            if item:
-                del item
-
+        layout = self._group_list_layout
         current_key = self._conversation_key_for(self._group_characters)
         chats = self._group_chats()
+
+        if full_rebuild:
+            while layout.count():
+                item = layout.takeAt(0)
+                widget = item.widget() if item else None
+                if widget:
+                    widget.deleteLater()
+                if item:
+                    del item
+
         if not chats:
+            # Remove all rows if showing empty state
+            for i in range(layout.count() - 1, -1, -1):
+                w = layout.itemAt(i).widget()
+                if isinstance(w, GroupChatListRow):
+                    w.deleteLater()
+                    layout.takeAt(i)
             empty = BodyLabel(_tr("ChatWindow.no_convs"), self._group_list_widget)
             empty.setObjectName("GroupListEmpty")
             empty.setWordWrap(True)
-            self._group_list_layout.addWidget(empty)
-            self._group_list_layout.addStretch()
+            layout.addWidget(empty)
+            layout.addStretch()
             return
 
-        for idx, chat in enumerate(chats):
+        # Remove empty-state labels if present
+        for i in range(layout.count() - 1, -1, -1):
+            w = layout.itemAt(i).widget()
+            if w and w.objectName() == "GroupListEmpty":
+                w.deleteLater()
+                layout.takeAt(i)
+
+        # Build index of existing rows by group_key
+        old_rows: dict[str, GroupChatListRow] = {}
+        for i in range(layout.count()):
+            w = layout.itemAt(i).widget()
+            if isinstance(w, GroupChatListRow) and w.group_key:
+                old_rows[w.group_key] = w
+
+        new_keys = set()
+        for chat in chats:
+            key = self._conversation_key_for(chat["characters"])
+            new_keys.add(key)
             combo = chat["characters"]
-            row = GroupChatListRow(
-                combo,
-                self._group_display_name(combo),
-                self._group_preview(chat),
-                self._conversation_key_for(combo) == current_key,
-                self._group_list_widget,
-            )
-            row.selected.connect(self._switch_group_chat)
-            row.context_menu_requested.connect(self._show_group_chat_context_menu)
-            self._group_list_layout.addWidget(row)
-        self._group_list_layout.addStretch()
+            title = self._group_display_name(combo)
+            preview = self._group_preview(chat)
+            is_current = key == current_key
+
+            if key in old_rows:
+                old_rows[key].update_preview(title, preview, is_current)
+            else:
+                row = GroupChatListRow(
+                    combo, title, preview, is_current,
+                    group_key=key,
+                    parent=self._group_list_widget,
+                )
+                row.selected.connect(self._switch_group_chat)
+                row.context_menu_requested.connect(self._show_group_chat_context_menu)
+                layout.addWidget(row)
+
+        # Remove rows no longer in the list
+        for key, row in old_rows.items():
+            if key not in new_keys:
+                row.selected.disconnect()
+                row.context_menu_requested.disconnect()
+                row.deleteLater()
+
+        # Ensure stretch is at the end
+        has_stretch = False
+        for i in range(layout.count()):
+            if layout.itemAt(i).spacerItem():
+                has_stretch = True
+                break
+        if not has_stretch:
+            layout.addStretch()
+
+    def _update_group_list_preview(self):
+        """Refresh preview text on existing rows without rebuilding the list."""
+        if not hasattr(self, "_group_list_layout"):
+            return
+        current_key = self._conversation_key_for(self._group_characters)
+        chats = self._group_chats()
+        chat_map = {self._conversation_key_for(c["characters"]): c for c in chats}
+        layout = self._group_list_layout
+        for i in range(layout.count()):
+            w = layout.itemAt(i).widget()
+            if isinstance(w, GroupChatListRow) and w.group_key:
+                chat = chat_map.get(w.group_key)
+                if chat:
+                    combo = chat["characters"]
+                    w.update_preview(
+                        self._group_display_name(combo),
+                        self._group_preview(chat),
+                        w.group_key == current_key,
+                    )
 
     def _build_titlebar(self):
         bar = RoundedPanel()
@@ -2840,6 +2951,7 @@ class ChatWindow(QWidget):
         QApplication.sendEvent(self._msg_area, QEvent(QEvent.Type.LayoutRequest))
 
     def _clear_message_widgets(self):
+        self._message_cache.clear()
         if self._msg_layout.count() > 0:
             item = self._msg_layout.takeAt(self._msg_layout.count() - 1)
             if item:
@@ -3164,6 +3276,7 @@ class ChatWindow(QWidget):
         self._current_bubble = None
         self._group_queue = []
         self._group_spoken = []
+        self._sanitize_regex_cache.clear()
         self._group_characters = normalized
         self._is_group_chat = True
         self._conversation_key = next_key
@@ -3422,6 +3535,7 @@ class ChatWindow(QWidget):
             return
         else:
             messages = self._db.get_messages(self._conv_id)
+        self._message_cache = list(messages)
         stretch = self._msg_layout.takeAt(self._msg_layout.count() - 1)
         if stretch:
             del stretch
@@ -3490,10 +3604,14 @@ class ChatWindow(QWidget):
         }
         if not names:
             return text.strip()
-        name_pattern = "|".join(re.escape(name) for name in sorted(names, key=len, reverse=True))
-        label_re = re.compile(
-            rf"(?m)^[ \t]*(?:【(?P<fw>{name_pattern})】|\[(?P<sq>{name_pattern})\]|(?P<plain>{name_pattern})\s*[：:])\s*"
-        )
+        cache_key = tuple(sorted(names))
+        label_re = self._sanitize_regex_cache.get(cache_key)
+        if label_re is None:
+            name_pattern = "|".join(re.escape(name) for name in sorted(names, key=len, reverse=True))
+            label_re = re.compile(
+                rf"(?m)^[ \t]*(?:【(?P<fw>{name_pattern})】|\[(?P<sq>{name_pattern})\]|(?P<plain>{name_pattern})\s*[：:])\s*"
+            )
+            self._sanitize_regex_cache[cache_key] = label_re
         matches = list(label_re.finditer(text))
         if not matches:
             return text.strip()
@@ -4055,6 +4173,15 @@ class ChatWindow(QWidget):
     def _reload_runtime_config(self):
         if self._cfg and hasattr(self._cfg, "load"):
             try:
+                import os as _os
+                from config_manager import CONFIG_PATH as _cfg_path
+                mtime = _os.path.getmtime(str(_cfg_path))
+                if mtime <= self._config_last_mtime:
+                    return
+                self._config_last_mtime = mtime
+            except Exception:
+                pass
+            try:
                 self._cfg.load()
             except Exception:
                 pass
@@ -4065,33 +4192,19 @@ class ChatWindow(QWidget):
 
     def _build_messages_for_character(self, character: str, spoken_names: list[str]) -> list[dict]:
         system_prompt = self._group_system_prompt(character, spoken_names) if self._is_group_chat else build_system_prompt(character, self._cfg)
-        system_prompt += "\n\n" + build_relationship_context(
-            self._db,
-            character,
-            self._user_memory_key(),
-            self._user_name or _tr("ChatWindow.you"),
-        )
+        system_prompt += "\n\n" + self._cached_relationship_context(character)
         if self._cfg and self._cfg.get("chat_integration_enabled", False) and self._cfg.get("chat_integration_include_context", True):
             external_context = self._db.external_chat_context_text()
             if external_context:
                 system_prompt += "\n\n" + external_context
         messages = [{"role": "system", "content": system_prompt}]
-        if self._is_group_chat:
-            history = self._db.get_group_messages(self._conversation_key, self._group_conv_id) if self._group_conv_id else []
-            max_history = 20
-            for m in history[-(max_history * 2):]:
-                messages.append({
-                    "role": m["role"],
-                    "content": self._chat_message_content(m["content"], m.get("attachments_json")),
-                })
-        elif self._conv_id:
-            history = self._db.get_messages(self._conv_id)
-            max_history = 20
-            for m in history[-(max_history * 2):]:
-                messages.append({
-                    "role": m["role"],
-                    "content": self._chat_message_content(m["content"], m.get("attachments_json")),
-                })
+        max_history = 20
+        cache = self._message_cache
+        for m in cache[-(max_history * 2):]:
+            messages.append({
+                "role": m["role"],
+                "content": self._chat_message_content(m["content"], m.get("attachments_json")),
+            })
         now = datetime.now()
         time_str = now.strftime("%Y-%m-%d %I:%M %p")
         time_suffix = f"\n\n【后置提示词】\n当前时间：{time_str}"
@@ -4107,6 +4220,26 @@ class ChatWindow(QWidget):
                     messages[i]["content"] = str(content) + time_suffix
                 break
         return messages
+
+    def _cached_relationship_context(self, character: str) -> str:
+        user_key = self._user_memory_key()
+        cache_key = (character, user_key)
+        cached = self._relationship_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        ctx = build_relationship_context(
+            self._db, character, user_key,
+            self._user_name or _tr("ChatWindow.you"),
+        )
+        self._relationship_cache[cache_key] = ctx
+        return ctx
+
+    def _invalidate_relationship_cache(self, character: str = ""):
+        user_key = self._user_memory_key()
+        if character:
+            self._relationship_cache.pop((character, user_key), None)
+        else:
+            self._relationship_cache.clear()
 
     def _send_message(self):
         text = self._input.toPlainText().strip()
@@ -4272,16 +4405,25 @@ class ChatWindow(QWidget):
         self._input.setFocus()
 
     def _commit_user_message(self, text: str, attachments: list[dict], start_response: bool = True):
+        entry = {"role": "user", "content": text}
+        if attachments:
+            entry["attachments_json"] = json.dumps(attachments, ensure_ascii=False)
+        self._message_cache.append(entry)
+        self._invalidate_relationship_cache(self._character)
         if self._is_group_chat:
-            self._last_group_user_message_id = self._db.add_group_message(self._conversation_key, self._ensure_group_conversation_id(), "user", text, attachments=attachments)
+            conv_id = self._ensure_group_conversation_id()
+            _db_async_write(_do_add_group_message, self._conversation_key, conv_id, "user", text, attachments)
+            self._last_group_user_message_id = None
             self._last_user_message_id = None
         else:
             if self._conv_id is None:
                 self._conv_id = self._db.create_conversation(self._conversation_key)
-            self._last_user_message_id = self._db.add_message(self._conv_id, "user", text, attachments=attachments)
+            _db_async_write(_do_add_message, self._conv_id, "user", text, attachments)
+            self._last_user_message_id = None
             self._last_group_user_message_id = None
         self._last_user_text = text
-        self._refresh_group_list()
+        if self._is_group_chat:
+            self._update_group_list_preview()
         if not start_response:
             return
         if self._is_group_chat:
@@ -4306,8 +4448,7 @@ class ChatWindow(QWidget):
             for character in self._group_characters
         ]
         recent = []
-        history = self._db.get_group_messages(self._conversation_key, self._group_conv_id) if self._group_conv_id else []
-        for m in history[-12:]:
+        for m in self._message_cache[-12:]:
             recent.append({"role": m["role"], "content": m["content"]})
         planner_prompt = (
             "你是群聊发言调度器。根据用户最新发言、成员关系和最近上下文，决定接下来哪些角色发言以及发言条数。"
@@ -4524,12 +4665,19 @@ class ChatWindow(QWidget):
 
         stored = self._assistant_content(self._active_response_character, clean)
         tool_trace = {"web_search_sources": self._stream_search_sources} if self._stream_search_sources else None
+        cache_entry = {"role": "assistant", "content": stored}
+        if reasoning_clean:
+            cache_entry["reasoning_content"] = reasoning_clean
+        if tool_trace:
+            cache_entry["tool_trace_json"] = json.dumps(tool_trace, ensure_ascii=False)
+        self._message_cache.append(cache_entry)
         if self._is_group_chat:
-            self._db.add_group_message(self._conversation_key, self._ensure_group_conversation_id(), "assistant", stored, reasoning_clean, tool_trace=tool_trace)
-            self._refresh_group_list()
+            conv_id = self._ensure_group_conversation_id()
+            _db_async_write(_do_add_group_message, self._conversation_key, conv_id, "assistant", stored, reasoning_content=reasoning_clean, tool_trace=tool_trace)
+            self._update_group_list_preview()
         elif self._conv_id:
-            self._db.add_message(self._conv_id, "assistant", stored, reasoning_clean, tool_trace=tool_trace)
-            self._refresh_group_list()
+            _db_async_write(_do_add_message, self._conv_id, "assistant", stored, reasoning_content=reasoning_clean, tool_trace=tool_trace)
+        self._invalidate_relationship_cache(self._active_response_character)
         self._apply_relationship_update(self._active_response_character, self._last_user_text, clean, acts)
 
         if self._is_group_chat:
@@ -4571,12 +4719,19 @@ class ChatWindow(QWidget):
 
         stored = self._assistant_content(self._active_response_character, clean)
         tool_trace = {"web_search_sources": self._stream_search_sources} if self._stream_search_sources else None
+        cache_entry = {"role": "assistant", "content": stored}
+        if reasoning_clean:
+            cache_entry["reasoning_content"] = reasoning_clean
+        if tool_trace:
+            cache_entry["tool_trace_json"] = json.dumps(tool_trace, ensure_ascii=False)
+        self._message_cache.append(cache_entry)
         if self._is_group_chat:
-            self._db.add_group_message(self._conversation_key, self._ensure_group_conversation_id(), "assistant", stored, reasoning_clean, tool_trace=tool_trace)
-            self._refresh_group_list()
+            conv_id = self._ensure_group_conversation_id()
+            _db_async_write(_do_add_group_message, self._conversation_key, conv_id, "assistant", stored, reasoning_content=reasoning_clean, tool_trace=tool_trace)
+            self._update_group_list_preview()
         elif self._conv_id:
-            self._db.add_message(self._conv_id, "assistant", stored, reasoning_clean, tool_trace=tool_trace)
-            self._refresh_group_list()
+            _db_async_write(_do_add_message, self._conv_id, "assistant", stored, reasoning_content=reasoning_clean, tool_trace=tool_trace)
+        self._invalidate_relationship_cache(self._active_response_character)
         self._apply_relationship_update(self._active_response_character, self._last_user_text, clean, acts)
 
         if self._is_group_chat:

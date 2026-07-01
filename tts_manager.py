@@ -556,7 +556,7 @@ class TTSRequestWorker(QThread):
         )
         with _tts_lock:
             self._ensure_gpt_sovits_weights(paths)
-            response = requests.post(self._tts_url() + "tts", json=payload, stream=False, timeout=300)
+        response = requests.post(self._tts_url() + "tts", json=payload, stream=False, timeout=300)
         if response.status_code != 200:
             self.error.emit(f"TTS HTTP {response.status_code}: {self._response_error(response)}")
             return None
@@ -893,9 +893,7 @@ class TTSPlayer(QObject):
             # Apply volume
             if self._volume < 0.999:
                 chunk = chunk * self._volume
-            rms = float(np.sqrt(np.mean(chunk * chunk)))
-            peak = float(np.max(np.abs(chunk)))
-            self._level = max(self._level, min(max(rms * 4.0, peak * 0.35), 0.55))
+            self._level = max(self._level, min(chunk.max() * 0.35, 0.55))
             if chunk.shape[1] == self._channels:
                 outdata[filled:filled + take] = chunk
             elif self._channels == 1:
