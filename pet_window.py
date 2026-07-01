@@ -1596,7 +1596,7 @@ class PetWindow(QWidget):
             else:
                 self._close_media_overlay()
         if "media_control_style" in data:
-            style = str(data.get("media_control_style", "ghost_acrylic") or "").strip().lower()
+            style = str(data.get("media_control_style", "aurora") or "").strip().lower()
             if self._radial_media_item is not None:
                 self._radial_media_item.set_style(style)
         if data.get("compact_ai_window_reset_position") and self._compact_ai_window is not None:
@@ -2153,27 +2153,27 @@ class PetWindow(QWidget):
         radial_menu = RadialMenu()
         radial_menu.lock_toggled.connect(self._on_lock_toggled)
 
-        style = self._cfg.get("media_control_style", "ghost_acrylic") if self._cfg else "ghost_acrylic"
+        style = self._cfg.get("media_control_style", "aurora") if self._cfg else "aurora"
         style = str(style or "").strip().lower()
         if style not in MediaRadialItem.VALID_STYLES:
-            style = "ghost_acrylic"
+            style = "aurora"
         self._radial_media_item = radial_menu.add_media_item(style=style)
         self._radial_media_item.command_requested.connect(self._send_media_command)
         self._radial_media_item.style_selected.connect(self._on_radial_media_style_selected)
 
         radial_menu.add_item(
-            "", _tr("PetWindow.radial_chat"), QColor(138, 43, 226),
-            glyph="\U0001F4AC",
+            "", _tr("PetWindow.radial_chat"), QColor(170, 150, 210),
+            glyph="◈",
             on_click=self._on_radial_chat,
         )
         radial_menu.add_item(
-            "", _tr("PetWindow.radial_costume"), QColor(220, 50, 120),
-            glyph="\U0001F457",
+            "", _tr("PetWindow.radial_costume"), QColor(210, 150, 170),
+            glyph="✦",
             on_click=self._on_radial_costume,
         )
         radial_menu.add_item(
-            "", _tr("PetWindow.radial_weather", "天气"), QColor(14, 165, 233),
-            glyph="\U0001F324",
+            "", _tr("PetWindow.radial_weather", "天气"), QColor(130, 190, 170),
+            glyph="◉",
             on_click=self._on_radial_weather,
         )
         radial_menu.add_spacer()
@@ -2786,6 +2786,11 @@ class PetWindow(QWidget):
             return
         self._tts_player = _TTSPlayer(self)
         self._tts_player.error.connect(self._on_pet_tts_error)
+        if self._cfg:
+            try:
+                self._tts_player.set_volume(float(self._cfg.get("tts_volume", 0.7)))
+            except (TypeError, ValueError):
+                pass
 
     def _speak_pet_text(self, text: str):
         """Request TTS for a pet bubble text, with caching."""

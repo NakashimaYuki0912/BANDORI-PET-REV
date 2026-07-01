@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Aurora 极光重设计</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+    background: #0b0d12; color: #e2e8f0; padding: 28px 20px; min-height: 100vh;
+}
+h1 { text-align: center; font-size: 1.35rem; margin-bottom: 4px; }
+.sub { text-align: center; color: #64748b; font-size: 0.82rem; margin-bottom: 24px; }
+
+/* Compare row */
+.compare-row {
+    display: flex; gap: 24px; justify-content: center; flex-wrap: wrap; align-items: flex-start;
+}
+.card-wrap {
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    background: #11141b; border: 1px solid #1e2230; border-radius: 16px;
+    padding: 18px 16px 14px;
+}
+.card-wrap h3 { font-size: 0.85rem; font-weight: 700; }
+.card-wrap .note { font-size: 0.7rem; color: #7b89a1; max-width: 320px; text-align: center; line-height: 1.5; }
+
+/* Card base */
+.card {
+    position: relative; width: 310px; height: 144px; border-radius: 18px; overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+}
+.card .app { font-size: 10px; font-weight: 700; }
+.card .track { font-size: 11px; font-weight: 600; line-height: 1.35; }
+.card .menu-btn {
+    position: absolute; width: 24px; height: 24px; border-radius: 12px;
+    display: grid; place-items: center; font-weight: 700; font-size: 12px;
+    top: 10px; right: 10px;
+}
+.card .ctrls {
+    position: absolute; display: flex; align-items: center; justify-content: center;
+    gap: 10px; left: 0; right: 0; bottom: 22px;
+}
+.btn {
+    width: 34px; height: 26px; border-radius: 13px;
+    display: grid; place-items: center;
+    font-weight: 900; font-size: 12px; border: none;
+}
+.btn.play { font-size: 14px; }
+.btn:hover { filter: brightness(1.15); }
+
+/* ═══════════════════════════════════
+   OLD Aurora (wrong — radial blobs)
+   ═══════════════════════════════════ */
+.old-aurora {
+    background:
+        radial-gradient(ellipse at 82% 12%, rgba(180,240,255,0.35) 0 28px, transparent 30px),
+        radial-gradient(ellipse at 15% 85%, rgba(200,140,255,0.28) 0 48px, transparent 50px),
+        radial-gradient(ellipse at 55% 50%, rgba(255,160,200,0.18) 0 80px, transparent 82px),
+        linear-gradient(160deg, #1a1628 0%, #201a2e 35%, #241e32 65%, #1c1a2b 100%);
+    border: 1px solid rgba(180,160,220,0.25);
+}
+.old-aurora .app { color: rgba(210,195,240,0.8); }
+.old-aurora .track { color: rgba(235,225,250,0.92); }
+.old-aurora .menu-btn {
+    background: rgba(255,255,255,0.10); border:1px solid rgba(180,160,220,0.18); color:rgba(210,195,240,0.7);
+}
+.old-aurora .btn { background:rgba(225,205,250,0.45); color:rgba(235,225,250,0.9); }
+.old-aurora .btn.play { background:linear-gradient(135deg, rgba(200,155,240,0.82), rgba(160,115,220,0.73)); color:#fff; }
+
+/* ═══════════════════════════════════
+   NEW Aurora — vertical flowing bands
+   ═══════════════════════════════════ */
+.aurora {
+    background:
+        /* wave 1: bottom green glow */
+        linear-gradient(0deg,
+            rgba(80,220,160,0.22) 0%, rgba(80,200,140,0.10) 18%,
+            transparent 35%),
+        /* wave 2: mid teal band */
+        linear-gradient(5deg,
+            transparent 25%,
+            rgba(60,210,180,0.15) 34%, rgba(100,230,200,0.22) 42%,
+            rgba(60,200,170,0.12) 50%, transparent 58%),
+        /* wave 3: upper purple-pink band */
+        linear-gradient(-3deg,
+            transparent 38%,
+            rgba(160,100,220,0.16) 48%, rgba(200,130,240,0.25) 55%,
+            rgba(140,90,200,0.14) 62%, transparent 72%),
+        /* wave 4: faint green upper accent */
+        linear-gradient(8deg,
+            transparent 52%, rgba(80,200,140,0.10) 60%,
+            rgba(120,220,170,0.16) 66%, transparent 74%),
+        /* base dark sky */
+        linear-gradient(175deg, #0d111f 0%, #0f1425 30%, #0e1222 60%, #0c1020 100%);
+    border: 1px solid rgba(80,180,160,0.22);
+    box-shadow: 0 0 40px rgba(60,180,140,0.06), 0 0 80px rgba(120,80,200,0.04);
+}
+/* Vertical streak overlays — the "curtain" effect */
+.aurora::before {
+    content: "";
+    position: absolute; inset: 0; pointer-events: none;
+    background:
+        /* streak 1 */
+        linear-gradient(180deg,
+            transparent 20%, rgba(60,220,160,0.08) 28%, rgba(80,240,180,0.14) 35%,
+            rgba(40,200,140,0.06) 42%, transparent 50%),
+        /* streak 2 */
+        linear-gradient(182deg,
+            transparent 40%, rgba(120,80,210,0.10) 48%, rgba(180,120,240,0.18) 55%,
+            rgba(100,60,200,0.08) 62%, transparent 70%);
+    mask-image:
+        linear-gradient(90deg, transparent 5%, white 12%, white 18%, transparent 25%,
+                               transparent 38%, white 44%, white 50%, transparent 56%,
+                               transparent 65%, white 72%, white 78%, transparent 85%);
+    -webkit-mask-image:
+        linear-gradient(90deg, transparent 5%, white 12%, white 18%, transparent 25%,
+                               transparent 38%, white 44%, white 50%, transparent 56%,
+                               transparent 65%, white 72%, white 78%, transparent 85%);
+}
+.aurora .app { color: rgba(160,210,200,0.75); }
+.aurora .track { color: rgba(200,235,225,0.88); }
+.aurora .menu-btn {
+    background: rgba(100,180,160,0.10); border:1px solid rgba(80,180,160,0.16);
+    color: rgba(140,200,180,0.6);
+}
+.aurora .btn {
+    background: rgba(100,190,170,0.35); color: rgba(200,240,230,0.88);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+    border: 1px solid rgba(100,200,170,0.15);
+}
+.aurora .btn.play {
+    background: linear-gradient(135deg, rgba(70,200,150,0.70), rgba(120,80,200,0.55));
+    color: #fff;
+    box-shadow: 0 0 14px rgba(60,180,140,0.20);
+    border: none;
+}
+.aurora .btn:hover { background: rgba(120,210,185,0.50); }
+.aurora .btn.play:hover { background: linear-gradient(135deg, rgba(90,220,165,0.78), rgba(140,100,215,0.65)); }
+
+/* Badge */
+.badge-fail { background:#3b1a1a; color:#f87171; display:inline-block; padding:3px 10px; border-radius:999px; font-size:0.7rem; }
+.badge-ok { background:#1a3b2a; color:#4ade80; display:inline-block; padding:3px 10px; border-radius:999px; font-size:0.7rem; }
+</style>
+</head>
+<body>
+
+<h1>🌌 Aurora 极光 · 重设计</h1>
+<p class="sub">从"圆形光斑"→"垂直流动光带"，还原真实极光特征</p>
+
+<div class="compare-row">
+    <!-- OLD -->
+    <div class="card-wrap">
+        <h3>❌ 旧版 Aurora</h3>
+        <div class="card old-aurora">
+            <div class="menu-btn">···</div>
+            <div style="position:absolute; left:14px; top:14px;"><div class="app">Spotify</div></div>
+            <div style="position:absolute; left:14px; top:48px; width:250px;"><div class="track">Roselia — FIRE BIRD</div></div>
+            <div class="ctrls">
+                <div class="btn">◀</div><div class="btn play">▶</div><div class="btn">▶</div>
+            </div>
+        </div>
+        <div class="note">圆形径向光斑 ⟶ 像舞台灯光，不像极光</div>
+        <span class="badge-fail">问题</span>
+    </div>
+
+    <!-- NEW -->
+    <div class="card-wrap">
+        <h3>✅ 新版 Aurora</h3>
+        <div class="card aurora">
+            <div class="menu-btn">···</div>
+            <div style="position:absolute; left:14px; top:14px;"><div class="app">Spotify</div></div>
+            <div style="position:absolute; left:14px; top:48px; width:250px;"><div class="track">Roselia — FIRE BIRD</div></div>
+            <div class="ctrls">
+                <div class="btn">◀</div><div class="btn play">▶</div><div class="btn">▶</div>
+            </div>
+        </div>
+        <div class="note">
+            <strong>垂直渐变光带</strong>：底层绿 → 中层青 → 上层紫粉<br>
+            <strong>竖条纹遮罩</strong>：模拟极光帷幕的竖条纹理<br>
+            <strong>按钮色调统一</strong>：青绿/紫渐变呼应光带色
+        </div>
+        <span class="badge-ok">修复</span>
+    </div>
+</div>
+
+<p style="text-align:center; margin-top:20px; font-size:0.76rem; color:#4b5563;">
+    确认后我将同时实现：新版 Aurora + Blossom 花漾粉 + Matcha 抹茶绿
+</p>
+</body>
+</html>

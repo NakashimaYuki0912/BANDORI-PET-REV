@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Media Card · 缩小版 + 风格重设计</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+    background: #0b0d12;
+    color: #e2e8f0;
+    padding: 28px 20px;
+    min-height: 100vh;
+}
+h1 { text-align: center; font-size: 1.4rem; margin-bottom: 4px; }
+.sub { text-align: center; color: #64748b; font-size: 0.82rem; margin-bottom: 28px; }
+
+.styles-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+    gap: 20px;
+    max-width: 1100px;
+    margin: 0 auto;
+}
+.style-demo {
+    background: #11141b;
+    border: 1px solid #1e2230;
+    border-radius: 16px;
+    padding: 22px 18px 18px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+}
+.style-demo h3 {
+    font-size: 0.9rem;
+    font-weight: 700;
+    display: flex; align-items: center; gap: 8px;
+}
+.style-demo .tag {
+    font-size: 0.65rem; font-weight: 500; padding: 2px 8px; border-radius: 999px;
+    background: #1e2430; color: #94a3b8;
+}
+.style-demo .desc {
+    font-size: 0.75rem; color: #7b89a1; text-align: center; line-height: 1.5;
+    min-height: 2.2em;
+}
+
+/* ============================================
+   MEDIA CARD — Scaled down: 310×144
+   ============================================ */
+.media-card {
+    position: relative; width: 310px; height: 144px;
+    border-radius: 18px; overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+    transition: transform 0.2s, box-shadow 0.2s;
+    cursor: default;
+}
+.media-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 22px 44px rgba(0,0,0,.45);
+}
+
+.mc-app {
+    font-size: 10px; font-weight: 700;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mc-track {
+    font-size: 11px; font-weight: 600; line-height: 1.35;
+}
+.mc-menu-btn {
+    position: absolute; width: 24px; height: 24px; border-radius: 12px;
+    display: grid; place-items: center;
+    font-weight: 700; font-size: 12px; cursor: pointer;
+    border: none;
+}
+.mc-controls {
+    position: absolute; display: flex; align-items: center; justify-content: center;
+    gap: 10px;
+}
+
+/* Button: 34×26 pill */
+.ctrl-btn {
+    width: 34px; height: 26px; border-radius: 13px;
+    display: grid; place-items: center;
+    cursor: pointer; font-weight: 900;
+    border: none; transition: all 0.12s;
+    font-size: 12px;
+}
+.ctrl-btn:hover { filter: brightness(1.15); }
+.ctrl-btn:active { filter: brightness(0.9); transform: scale(0.95); }
+.ctrl-btn.play { font-size: 14px; }
+
+/* ============================================
+   Style 1 — Aurora (极光)
+   ============================================ */
+.aurora {
+    background:
+        radial-gradient(ellipse at 82% 12%, rgba(180,240,255,0.35) 0 28px, transparent 30px),
+        radial-gradient(ellipse at 15% 85%, rgba(200,140,255,0.28) 0 48px, transparent 50px),
+        radial-gradient(ellipse at 55% 50%, rgba(255,160,200,0.18) 0 80px, transparent 82px),
+        linear-gradient(160deg, #1a1628 0%, #201a2e 35%, #241e32 65%, #1c1a2b 100%);
+    border: 1px solid rgba(180,160,220,0.25);
+    box-shadow: 0 0 40px rgba(140,100,220,0.10), 0 0 80px rgba(180,140,240,0.04);
+}
+.aurora .mc-app { color: rgba(210,195,240,0.8); }
+.aurora .mc-track { color: rgba(235,225,250,0.92); }
+.aurora .mc-menu-btn {
+    background: rgba(255,255,255,0.10); color: rgba(210,195,240,0.7);
+    border: 1px solid rgba(180,160,220,0.18);
+    top: 10px; right: 10px;
+}
+.aurora .ctrl-btn {
+    background: rgba(210,190,240,0.18);
+    color: rgba(225,210,245,0.85);
+    box-shadow: 0 0 12px rgba(150,120,220,0.12), inset 0 1px 0 rgba(255,255,255,0.06);
+}
+.aurora .ctrl-btn.play {
+    background: linear-gradient(135deg, rgba(180,140,230,0.55), rgba(140,100,200,0.5));
+    box-shadow: 0 0 18px rgba(150,120,220,0.22), inset 0 1px 0 rgba(255,255,255,0.10);
+    color: #fff;
+}
+
+/* ============================================
+   Style 2 — Neon Pulse (霓虹脉冲)
+   ============================================ */
+.neon {
+    background:
+        repeating-linear-gradient(0deg, rgba(0,240,255,0.025) 0 2px, transparent 2px 4px),
+        linear-gradient(160deg, #0a121f 0%, #0c1626 50%, #0a111c 100%);
+    border: 1px solid rgba(0,210,240,0.35);
+    box-shadow:
+        0 0 16px rgba(0,200,230,0.12),
+        0 0 40px rgba(0,180,210,0.05),
+        inset 0 1px 0 rgba(0,230,255,0.04);
+}
+.neon::after {
+    content: "";
+    position: absolute; left: -20%; right: -20%; top: 46%;
+    height: 1.5px;
+    background: linear-gradient(90deg, transparent 0%, rgba(0,220,255,0.5) 15%, rgba(255,50,150,0.4) 50%, rgba(0,220,255,0.5) 85%, transparent 100%);
+    transform: rotate(-5deg);
+}
+.neon .mc-app { color: rgba(100,230,245,0.75); }
+.neon .mc-track { color: rgba(200,248,255,0.9); }
+.neon .mc-menu-btn {
+    background: rgba(0,180,210,0.10); color: rgba(100,230,245,0.6);
+    border: 1px solid rgba(0,200,230,0.2);
+    top: 10px; right: 10px;
+}
+.neon .ctrl-btn {
+    background: rgba(0,180,220,0.12);
+    color: rgba(180,245,255,0.8);
+    box-shadow: 0 0 10px rgba(0,180,220,0.10), inset 0 1px 0 rgba(255,255,255,0.04);
+    border: 1px solid rgba(0,200,230,0.18);
+}
+.neon .ctrl-btn.play {
+    background: linear-gradient(135deg, rgba(0,210,240,0.6), rgba(230,30,120,0.45));
+    box-shadow: 0 0 20px rgba(0,200,230,0.25), 0 0 40px rgba(255,30,140,0.10);
+    color: #fff;
+    border: 1px solid rgba(150,240,255,0.25);
+}
+
+/* ============================================
+   Style 3 — Frosted Glass (磨砂玻璃)
+   ============================================ */
+.glass {
+    background: linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03));
+    border: 1px solid rgba(255,255,255,0.14);
+    box-shadow:
+        0 8px 32px rgba(0,0,0,0.18),
+        inset 0 1px 0 rgba(255,255,255,0.08),
+        inset 0 -1px 0 rgba(0,0,0,0.06);
+    backdrop-filter: blur(0px); /* signaled — would be blur in native */
+}
+/* Fake blur highlights */
+.glass::before {
+    content: "";
+    position: absolute;
+    inset: 6px; border-radius: 14px;
+    border: 1px solid rgba(255,255,255,0.06);
+    pointer-events: none;
+}
+.glass .mc-app { color: rgba(255,255,255,0.6); }
+.glass .mc-track { color: rgba(255,255,255,0.88); }
+.glass .mc-menu-btn {
+    background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.5);
+    top: 10px; right: 10px;
+}
+.glass .ctrl-btn {
+    background: rgba(255,255,255,0.10);
+    color: rgba(255,255,255,0.75);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.10);
+}
+.glass .ctrl-btn.play {
+    background: rgba(255,255,255,0.18);
+    box-shadow: 0 0 12px rgba(255,255,255,0.06), inset 0 1px 0 rgba(255,255,255,0.12);
+    color: #fff;
+}
+
+/* ============================================
+   Style 4 — Velvet Night (丝绒暗夜)
+   ============================================ */
+.velvet {
+    background:
+        radial-gradient(ellipse at 80% 15%, rgba(180,140,90,0.06) 0 30px, transparent 32px),
+        radial-gradient(ellipse at 20% 80%, rgba(160,100,60,0.05) 0 48px, transparent 50px),
+        linear-gradient(160deg, #18141e 0%, #1a1522 30%, #1c1624 60%, #17131d 100%);
+    border: 1px solid rgba(180,150,100,0.22);
+    box-shadow: 0 0 20px rgba(140,100,50,0.06), inset 0 1px 0 rgba(255,255,255,0.02);
+}
+.velvet::before {
+    content: ""; position: absolute;
+    inset: 8px; border-radius: 12px;
+    border: 1px solid rgba(190,155,105,0.10);
+    pointer-events: none;
+}
+.velvet .mc-app { color: rgba(200,170,130,0.65); }
+.velvet .mc-track { color: rgba(235,220,200,0.85); }
+.velvet .mc-menu-btn {
+    background: rgba(180,150,100,0.10); color: rgba(200,170,130,0.5);
+    border: 1px solid rgba(180,150,100,0.14);
+    top: 10px; right: 10px;
+}
+.velvet .ctrl-btn {
+    background: rgba(180,150,100,0.10);
+    color: rgba(220,200,170,0.7);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+    border: 1px solid rgba(180,150,100,0.12);
+}
+.velvet .ctrl-btn.play {
+    background: linear-gradient(135deg, rgba(200,155,90,0.5), rgba(150,110,60,0.4));
+    box-shadow: 0 0 14px rgba(180,140,80,0.14), inset 0 1px 0 rgba(255,255,255,0.06);
+    color: #fff;
+}
+
+/* ============================================
+   Style 5 — Prism (全息幻彩)
+   ============================================ */
+.prism {
+    background:
+        linear-gradient(110deg, rgba(120,140,255,0.08) 0%, transparent 40%),
+        linear-gradient(200deg, rgba(255,120,180,0.06) 30%, transparent 70%),
+        linear-gradient(320deg, rgba(100,220,200,0.06) 60%, transparent 90%),
+        linear-gradient(160deg, #12141d 0%, #161820 50%, #12151c 100%);
+    border: 1px solid rgba(180,180,200,0.18);
+    box-shadow:
+        0 0 24px rgba(120,140,255,0.05),
+        0 0 48px rgba(255,120,180,0.04);
+}
+.prism::after {
+    content: "";
+    position: absolute;
+    top: -30%; left: 20%; width: 60%; height: 160%;
+    background: linear-gradient(180deg,
+        rgba(180,180,255,0) 0%,
+        rgba(140,220,255,0.06) 25%,
+        rgba(255,160,200,0.04) 50%,
+        rgba(160,200,255,0.05) 75%,
+        rgba(180,180,255,0) 100%);
+    transform: rotate(-12deg);
+    pointer-events: none;
+}
+.prism .mc-app { color: rgba(180,190,220,0.6); }
+.prism .mc-track { color: rgba(220,225,240,0.85); }
+.prism .mc-menu-btn {
+    background: rgba(255,255,255,0.06); color: rgba(180,190,220,0.5);
+    border: 1px solid rgba(180,180,200,0.12);
+    top: 10px; right: 10px;
+}
+.prism .ctrl-btn {
+    background: rgba(180,185,210,0.08);
+    color: rgba(210,215,230,0.7);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+    border: 1px solid rgba(180,185,210,0.10);
+}
+.prism .ctrl-btn.play {
+    background: linear-gradient(135deg, rgba(130,150,210,0.45), rgba(180,120,170,0.35));
+    box-shadow: 0 0 16px rgba(140,140,200,0.14), inset 0 1px 0 rgba(255,255,255,0.06);
+    color: #fff;
+}
+
+/* Size comparison row */
+.size-compare {
+    display: flex; gap: 32px; justify-content: center; align-items: flex-start;
+    flex-wrap: wrap; margin-bottom: 32px;
+}
+.comp-item { text-align: center; }
+.comp-label { font-size: 0.7rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+.size-tag {
+    display: inline-block; font-size: 0.65rem; padding: 2px 8px; border-radius: 999px;
+    margin-top: 6px;
+}
+.size-tag.old { background: #3b1a1a; color: #f87171; }
+.size-tag.new { background: #1a3b1a; color: #4ade80; }
+
+/* Old card for comparison */
+.old-card {
+    position: relative; width: 368px; height: 172px; border-radius: 20px; overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+    background: linear-gradient(135deg, rgba(76,74,92,.94), rgba(35,38,48,.96));
+    border: 1px solid rgba(255,255,255,.15);
+    opacity: 0.65;
+}
+.old-card .mc-app { font-size: 11px; color: rgba(255,255,255,.78); }
+.old-card .mc-track { font-size: 12px; color: rgba(255,255,255,.94); line-height: 1.35; }
+</style>
+</head>
+<body>
+
+<h1>🎨 Media Card · 缩小版 + 风格重设计</h1>
+<p class="sub">尺寸缩小 ~16%，5 种新风格取代纯色扁平设计</p>
+
+<!-- Size comparison -->
+<div class="size-compare">
+    <div class="comp-item">
+        <div class="comp-label">之前 (方案C)</div>
+        <div class="old-card">
+            <div class="mc-menu-btn" style="top:12px; right:12px; width:28px; height:28px; border-radius:14px; background:rgba(32,32,38,.92); color:rgba(255,255,255,.78); border:1px solid rgba(255,255,255,.14);">···</div>
+            <div style="position:absolute; left:18px; top:18px;"><div class="mc-app">Chrome</div></div>
+            <div style="position:absolute; left:18px; top:56px; width:290px;"><div class="mc-track">Afterglow — ツナグ、ソラモヨウ</div></div>
+            <div class="mc-controls" style="position:absolute; left:0; right:0; bottom:26px; gap:14px;">
+                <div style="width:40px;height:30px;border-radius:20px;background:rgba(255,255,255,.88);display:grid;place-items:center;font-weight:900;color:#262632;font-size:14px;">◀</div>
+                <div style="width:40px;height:30px;border-radius:20px;background:linear-gradient(135deg,#ff8bc8,#f04f9e);display:grid;place-items:center;font-weight:900;color:#fff;font-size:15px;">▶</div>
+                <div style="width:40px;height:30px;border-radius:20px;background:rgba(255,255,255,.88);display:grid;place-items:center;font-weight:900;color:#262632;font-size:14px;">▶</div>
+            </div>
+        </div>
+        <div class="size-tag old">368 × 172 · 40px 按钮</div>
+    </div>
+    <div class="comp-item" style="align-self:center; font-size:1.2rem; color:#64748b; padding-top:60px;">→</div>
+    <div class="comp-item">
+        <div class="comp-label">新尺寸</div>
+        <div class="media-card aurora">
+            <div class="mc-menu-btn" style="top:10px; right:10px;">···</div>
+            <div style="position:absolute; left:14px; top:14px;"><div class="mc-app">Chrome</div></div>
+            <div style="position:absolute; left:14px; top:48px; width:250px;"><div class="mc-track">Afterglow — ツナグ、ソラモヨウ</div></div>
+            <div class="mc-controls" style="position:absolute; left:0; right:0; bottom:22px;">
+                <div class="ctrl-btn">◀</div>
+                <div class="ctrl-btn play">▶</div>
+                <div class="ctrl-btn">▶</div>
+            </div>
+        </div>
+        <div class="size-tag new">310 × 144 · 34px 按钮</div>
+    </div>
+</div>
+
+<!-- Style gallery -->
+<h2 style="text-align:center; font-size:1.1rem; margin:28px 0 18px;">5 种新风格</h2>
+<div class="styles-grid">
+
+    <!-- Aurora -->
+    <div class="style-demo">
+        <h3>🌌 Aurora <span class="tag">极光</span></h3>
+        <div class="media-card aurora">
+            <div class="mc-menu-btn" style="top:10px; right:10px;">···</div>
+            <div style="position:absolute; left:14px; top:14px;"><div class="mc-app">Spotify</div></div>
+            <div style="position:absolute; left:14px; top:48px; width:250px;"><div class="mc-track">Roselia — FIRE BIRD</div></div>
+            <div class="mc-controls" style="position:absolute; left:0; right:0; bottom:22px;">
+                <div class="ctrl-btn">◀</div><div class="ctrl-btn play">▶</div><div class="ctrl-btn">▶</div>
+            </div>
+        </div>
+        <div class="desc">多层径向渐变模拟极光光晕 + 柔光阴影。梦幻流动感。</div>
+    </div>
+
+    <!-- Neon Pulse -->
+    <div class="style-demo">
+        <h3>⚡ Neon Pulse <span class="tag">霓虹脉冲</span></h3>
+        <div class="media-card neon">
+            <div class="mc-menu-btn" style="top:10px; right:10px;">···</div>
+            <div style="position:absolute; left:14px; top:14px;"><div class="mc-app">YouTube Music</div></div>
+            <div style="position:absolute; left:14px; top:48px; width:250px;"><div class="mc-track">RAISE A SUILEN — EXPOSE</div></div>
+            <div class="mc-controls" style="position:absolute; left:0; right:0; bottom:22px;">
+                <div class="ctrl-btn">◀</div><div class="ctrl-btn play">▶</div><div class="ctrl-btn">▶</div>
+            </div>
+        </div>
+        <div class="desc">扫描线 + 霓虹外发光 + 青/品红双色。赛博朋克氛围。</div>
+    </div>
+
+    <!-- Frosted Glass -->
+    <div class="style-demo">
+        <h3>🫧 Frosted Glass <span class="tag">磨砂玻璃</span></h3>
+        <div class="media-card glass">
+            <div class="mc-menu-btn" style="top:10px; right:10px;">···</div>
+            <div style="position:absolute; left:14px; top:14px;"><div class="mc-app">Apple Music</div></div>
+            <div style="position:absolute; left:14px; top:48px; width:250px;"><div class="mc-track">Poppin'Party — キズナミュージック</div></div>
+            <div class="mc-controls" style="position:absolute; left:0; right:0; bottom:22px;">
+                <div class="ctrl-btn">◀</div><div class="ctrl-btn play">▶</div><div class="ctrl-btn">▶</div>
+            </div>
+        </div>
+        <div class="desc">半透明叠层 + 边缘高光 + 内阴影。干净现代的毛玻璃质感。</div>
+    </div>
+
+    <!-- Velvet Night -->
+    <div class="style-demo">
+        <h3>🌙 Velvet Night <span class="tag">丝绒暗夜</span></h3>
+        <div class="media-card velvet">
+            <div class="mc-menu-btn" style="top:10px; right:10px;">···</div>
+            <div style="position:absolute; left:14px; top:14px;"><div class="mc-app">NetEase Cloud</div></div>
+            <div style="position:absolute; left:14px; top:48px; width:250px;"><div class="mc-track">Afterglow — Y.O.L.O!!!!!</div></div>
+            <div class="mc-controls" style="position:absolute; left:0; right:0; bottom:22px;">
+                <div class="ctrl-btn">◀</div><div class="ctrl-btn play">▶</div><div class="ctrl-btn">▶</div>
+            </div>
+        </div>
+        <div class="desc">深紫/暗金渐变 + 内框金边 + 柔光。低调奢华不浮夸。</div>
+    </div>
+
+    <!-- Prism -->
+    <div class="style-demo">
+        <h3>💎 Prism <span class="tag">全息幻彩</span></h3>
+        <div class="media-card prism">
+            <div class="mc-menu-btn" style="top:10px; right:10px;">···</div>
+            <div style="position:absolute; left:14px; top:14px;"><div class="mc-app">QQ Music</div></div>
+            <div style="position:absolute; left:14px; top:48px; width:250px;"><div class="mc-track">Pastel*Palettes — しゅわりん☆どり〜みん</div></div>
+            <div class="mc-controls" style="position:absolute; left:0; right:0; bottom:22px;">
+                <div class="ctrl-btn">◀</div><div class="ctrl-btn play">▶</div><div class="ctrl-btn">▶</div>
+            </div>
+        </div>
+        <div class="desc">多角度彩色渐变叠加 + 虹彩光条。全息镭射质感。</div>
+    </div>
+
+</div>
+
+<p style="text-align:center; margin-top:24px; font-size:0.78rem; color:#4b5563;">
+    选好风格后告诉我，我将其实现到 radial_menu.py 中对应替换现有样式。
+</p>
+</body>
+</html>

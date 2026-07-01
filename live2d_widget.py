@@ -1,5 +1,6 @@
 import ctypes
 import sys
+import traceback
 import OpenGL.GL as gl
 from PySide6.QtCore import Qt, QPoint, QElapsedTimer, QTimer, Signal
 from PySide6.QtGui import QMouseEvent, QCursor, QGuiApplication, QSurfaceFormat, QOpenGLContext, QMoveEvent, QResizeEvent
@@ -8,6 +9,7 @@ from live2d_quality import LIVE2D_QUALITY_PROFILES, normalize_live2d_quality
 from lua_hit_area_projection import LuaCustomHitAreaState
 from platform_patch import set_live2d_texture_quality
 from zst_model_archive import clear_virtual_byte_cache, is_virtual_path, prefetch_virtual_model_resources
+from datetime import datetime
 
 class Live2DWidget(QOpenGLWidget):
     model_loaded = Signal()
@@ -81,16 +83,28 @@ class Live2DWidget(QOpenGLWidget):
         self._hit_clock = QElapsedTimer()
         self._hit_clock.start()
         self._custom_hit_areas = LuaCustomHitAreaState()
-        
+
+        # Crash recovery state
+        self._render_crash_count = 0
+        self._render_crash_reset_at = 0
+        self._max_crashes_before_reset = 5
+        self._crash_window_ms = 8000
+
         # 定时器设置
         self._render_timer = QTimer(self)
         self._render_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._render_timer.timeout.connect(self.update)
-        
+
         self._head_track_timer = QTimer(self)
         self._head_track_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._head_track_timer.setInterval(self._hit_test_interval_ms)
         self._head_track_timer.timeout.connect(self._poll_head_tracking)
+
+        # Health monitor: periodically check model validity
+        self._health_timer = QTimer(self)
+        self._health_timer.setTimerType(Qt.TimerType.CoarseTimer)
+        self._health_timer.setInterval(5000)
+        self._health_timer.timeout.connect(self._health_check)
 
         # 性能优化：缓存属性
         self._cache_w = 1
@@ -122,8 +136,25 @@ class Live2DWidget(QOpenGLWidget):
         return self._model_path
 
     def _safe_make_current(self):
-        if QOpenGLContext.currentContext() != self.context():
-            self.makeCurrent()
+        ctx = self.context()
+        if ctx is None:
+            return
+        if not ctx.isValid():
+            print(
+                f"[{datetime.now().strftime('%H:%M:%S')}] "
+                f"Live2D: OpenGL context invalid — skipping makeCurrent",
+                file=sys.stderr,
+            )
+            return
+        try:
+            if QOpenGLContext.currentContext() != ctx:
+                self.makeCurrent()
+        except Exception as exc:
+            print(
+                f"[{datetime.now().strftime('%H:%M:%S')}] "
+                f"Live2D: makeCurrent failed: {exc}",
+                file=sys.stderr,
+            )
 
     def set_fps(self, fps: int):
         self._fps = max(10, min(fps, 240))
@@ -286,9 +317,11 @@ class Live2DWidget(QOpenGLWidget):
         if not self._initialized_gl or self._static_render or not self._model or not self.isVisible():
             self._render_timer.stop()
             self._head_track_timer.stop()
+            self._health_timer.stop()
             return
         self._render_timer.start(self._frame_interval_ms())
         self._head_track_timer.start()
+        self._health_timer.start()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -297,7 +330,30 @@ class Live2DWidget(QOpenGLWidget):
     def hideEvent(self, event):
         self._render_timer.stop()
         self._head_track_timer.stop()
+        self._health_timer.stop()
         super().hideEvent(event)
+
+    def _health_check(self):
+        """Periodic health check: if model is missing but we have a path, try recovery."""
+        if self._model is not None:
+            return
+        if not self._model_path or not self._live2d or not self._initialized_gl:
+            return
+        print(
+            f"[{datetime.now().strftime('%H:%M:%S')}] "
+            f"Live2D health check: model is None but path exists, attempting reload",
+            file=sys.stderr,
+        )
+        try:
+            self._load_model_internal(self._model_path)
+        except Exception as exc:
+            print(
+                f"[{datetime.now().strftime('%H:%M:%S')}] "
+                f"Live2D health check reload failed: {exc}",
+                file=sys.stderr,
+            )
+        if self._model is not None:
+            self.update()
 
     # --------------------------------------------------------------------------
     # 事件处理与交互
@@ -345,17 +401,24 @@ class Live2DWidget(QOpenGLWidget):
         w, h = self._cache_w, self._cache_h
         if w <= 0 or h <= 0:
             return
+        self._safe_make_current()
         try:
-            self.makeCurrent()
             gl.glViewport(0, 0, int(w * self._system_scale), int(h * self._system_scale))
-            self.doneCurrent()
-        except Exception:
-            pass
+        except Exception as exc:
+            print(
+                f"[{datetime.now().strftime('%H:%M:%S')}] "
+                f"Live2D glViewport error: {exc}",
+                file=sys.stderr,
+            )
         if self._model:
             try:
                 self._model.Resize(w, h)
-            except Exception:
-                pass
+            except Exception as exc:
+                print(
+                    f"[{datetime.now().strftime('%H:%M:%S')}] "
+                    f"Live2D model Resize error: {exc}",
+                    file=sys.stderr,
+                )
             self._update_custom_hit_area_projection()
 
     def _refresh_system_scale(self, force: bool = False):
@@ -471,8 +534,16 @@ class Live2DWidget(QOpenGLWidget):
             self._drag_start_y = gpos.y()
 
     def _poll_head_tracking(self):
-        if self._model:
+        if not self._model:
+            return
+        try:
             self._model.Drag(self._cache_w_half, self._cache_h_half)
+        except Exception as exc:
+            print(
+                f"[{datetime.now().strftime('%H:%M:%S')}] "
+                f"Live2D head tracking error: {exc}",
+                file=sys.stderr,
+            )
 
     # --------------------------------------------------------------------------
     # OpenGL 渲染流程
@@ -513,18 +584,56 @@ class Live2DWidget(QOpenGLWidget):
         if (self._static_render and self._static_render_done) or not self._live2d or not self._model:
             return
 
-        gl.glEnable(gl.GL_BLEND)
-        gl.glBlendEquationSeparate(gl.GL_FUNC_ADD, gl.GL_FUNC_ADD)
+        try:
+            gl.glEnable(gl.GL_BLEND)
+            gl.glBlendEquationSeparate(gl.GL_FUNC_ADD, gl.GL_FUNC_ADD)
 
-        self._live2d.clearBuffer()
-        gl.glClearColor(*self._clear_color)
-        gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_STENCIL_BUFFER_BIT)
-        
-        self._model.Update()
-        self._apply_lip_sync()
-        self._model.Draw()
-        if self._static_render:
-            self._static_render_done = True
+            self._live2d.clearBuffer()
+            gl.glClearColor(*self._clear_color)
+            gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_STENCIL_BUFFER_BIT)
+
+            self._model.Update()
+            self._apply_lip_sync()
+            self._model.Draw()
+            if self._static_render:
+                self._static_render_done = True
+
+            # Reset crash counter on successful frame
+            self._render_crash_count = 0
+
+        except Exception as exc:
+            self._render_crash_count += 1
+            now = self._hit_clock.elapsed() if self._hit_clock.isValid() else 0
+            print(
+                f"[{datetime.now().strftime('%H:%M:%S')}] "
+                f"Live2D paintGL crash #{self._render_crash_count}: {exc}",
+                file=sys.stderr,
+            )
+            traceback.print_exc(file=sys.stderr)
+
+            # If we crash too many times in a short window, try model reload
+            if self._render_crash_count >= self._max_crashes_before_reset:
+                saved_path = self._model_path
+                print(
+                    f"[{datetime.now().strftime('%H:%M:%S')}] "
+                    f"Live2D: {self._render_crash_count} crashes — attempting model reload",
+                    file=sys.stderr,
+                )
+                try:
+                    self._live2d.clearBuffer()
+                except Exception:
+                    pass
+                self._model = None
+                self._model_path = ""
+                self._render_crash_count = 0
+                if saved_path and self._live2d:
+                    self._load_model_internal(saved_path)
+                    print(
+                        f"[{datetime.now().strftime('%H:%M:%S')}] "
+                        f"Live2D: model reload {'succeeded' if self._model else 'failed'}",
+                        file=sys.stderr,
+                    )
+                self.update()
 
     def _apply_lip_sync(self):
         if not self._model:

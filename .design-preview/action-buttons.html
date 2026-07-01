@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Action Buttons 重设计 · 方案对比</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+    background: #0b0d12; color: #e2e8f0; padding: 24px 16px; min-height: 100vh;
+}
+h1 { text-align: center; font-size: 1.3rem; margin-bottom: 4px; }
+.sub { text-align: center; color: #64748b; font-size: 0.8rem; margin-bottom: 24px; }
+
+/* Layout */
+.compare-row {
+    display: flex; gap: 18px; justify-content: center; flex-wrap: wrap; align-items: flex-start;
+    margin-bottom: 28px;
+}
+.option-card {
+    background: #11141b; border: 1px solid #1e2230; border-radius: 14px;
+    padding: 18px 14px 14px; display: flex; flex-direction: column;
+    align-items: center; gap: 10px; width: 170px;
+}
+.option-card h3 { font-size: 0.82rem; font-weight: 700; text-align: center; }
+.option-card .desc { font-size: 0.7rem; color: #7b89a1; text-align: center; line-height: 1.4; }
+.option-card .tag {
+    font-size: 0.6rem; padding: 2px 8px; border-radius: 999px; display: inline-block;
+}
+.tag-now { background:#3b1a1a; color:#f87171; }
+.tag-new { background:#1a3b2a; color:#4ade80; }
+
+/* Preview stage — dark bg simulating the radial menu */
+.stage {
+    width: 140px; height: 250px; border-radius: 14px;
+    background: radial-gradient(ellipse at center, #1a1d28 0%, #0d1018 100%);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 16px;
+    border: 1px solid #1e2430;
+}
+
+/* ═══════════════════════════════════
+   CURRENT — Old style
+   ═══════════════════════════════════ */
+.old-btn {
+    width: 80px; height: 80px; border-radius: 50%; position: relative;
+    display: grid; place-items: center; cursor: pointer;
+    transition: transform 0.15s;
+}
+.old-btn:hover { transform: scale(1.05); }
+.old-btn .label {
+    position: absolute; bottom: -18px; left: 50%; transform: translateX(-50%);
+    font-size: 9px; font-weight: 700; color: rgba(255,255,255,0.8); white-space: nowrap;
+}
+.old-chat {
+    background: radial-gradient(circle at 45% 30%, #c58aff, #5d22d8 70%, #3a0f8a 100%);
+    box-shadow: 0 8px 24px rgba(93,34,216,0.3);
+}
+.old-dress {
+    background: radial-gradient(circle at 45% 30%, #ff8ac4, #d81d69 70%, #8a0f3e 100%);
+    box-shadow: 0 8px 24px rgba(216,29,105,0.3);
+}
+.old-weather {
+    background: radial-gradient(circle at 45% 30%, #6ad4ff, #0877d8 70%, #044a8a 100%);
+    box-shadow: 0 8px 24px rgba(8,119,216,0.3);
+}
+.old-btn .gloss {
+    position: absolute; inset: 6px; border-radius: 50%;
+    background: radial-gradient(ellipse at 50% 30%, rgba(255,255,255,0.18) 0%, transparent 60%);
+}
+.old-btn .icon { font-size: 24px; z-index: 1; }
+
+/* ═══════════════════════════════════
+   Option A — Matcha Ring (抹茶圈)
+   ═══════════════════════════════════ */
+.ring-btn {
+    width: 80px; height: 80px; border-radius: 50%; position: relative;
+    display: grid; place-items: center; cursor: pointer;
+    transition: all 0.2s;
+}
+.ring-btn:hover { transform: scale(1.06); }
+.ring-btn .label {
+    position: absolute; bottom: -18px; left: 50%; transform: translateX(-50%);
+    font-size: 9px; font-weight: 600; white-space: nowrap;
+}
+.ring-chat {
+    background: rgba(180,160,220,0.08);
+    border: 2px solid rgba(160,140,210,0.35);
+    box-shadow: 0 0 16px rgba(140,120,200,0.06);
+}
+.ring-chat:hover { border-color: rgba(170,150,220,0.6); background: rgba(180,160,220,0.14); }
+.ring-chat .icon { font-size: 24px; }
+.ring-chat .label { color: rgba(200,185,230,0.7); }
+
+.ring-dress {
+    background: rgba(220,150,170,0.08);
+    border: 2px solid rgba(210,140,160,0.35);
+    box-shadow: 0 0 16px rgba(200,120,150,0.06);
+}
+.ring-dress:hover { border-color: rgba(220,150,170,0.6); background: rgba(220,150,170,0.14); }
+.ring-dress .icon { font-size: 24px; }
+.ring-dress .label { color: rgba(225,170,185,0.7); }
+
+.ring-weather {
+    background: rgba(140,200,180,0.08);
+    border: 2px solid rgba(120,190,160,0.35);
+    box-shadow: 0 0 16px rgba(100,180,140,0.06);
+}
+.ring-weather:hover { border-color: rgba(140,200,170,0.6); background: rgba(140,200,180,0.14); }
+.ring-weather .icon { font-size: 24px; }
+.ring-weather .label { color: rgba(160,210,190,0.7); }
+
+/* ═══════════════════════════════════
+   Option B — Soft Pill (柔润胶囊)
+   ═══════════════════════════════════ */
+.pill-btn {
+    width: 80px; height: 80px; border-radius: 24px; position: relative;
+    display: grid; place-items: center; cursor: pointer;
+    transition: all 0.2s;
+}
+.pill-btn:hover { transform: scale(1.05) translateY(-2px); }
+.pill-btn .label {
+    position: absolute; bottom: -18px; left: 50%; transform: translateX(-50%);
+    font-size: 9px; font-weight: 600; white-space: nowrap;
+}
+.pill-btn .icon { font-size: 22px; }
+.pill-chat {
+    background: linear-gradient(145deg, rgba(180,160,220,0.15), rgba(160,140,200,0.06));
+    border: 1px solid rgba(170,150,210,0.25);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.04);
+}
+.pill-chat:hover { background: linear-gradient(145deg, rgba(190,170,225,0.22), rgba(170,150,210,0.10)); }
+.pill-chat .label { color: rgba(200,185,230,0.65); }
+
+.pill-dress {
+    background: linear-gradient(145deg, rgba(220,150,170,0.15), rgba(210,140,160,0.06));
+    border: 1px solid rgba(210,140,160,0.25);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.04);
+}
+.pill-dress:hover { background: linear-gradient(145deg, rgba(230,160,180,0.22), rgba(220,150,170,0.10)); }
+.pill-dress .label { color: rgba(225,170,185,0.65); }
+
+.pill-weather {
+    background: linear-gradient(145deg, rgba(140,200,180,0.15), rgba(120,180,160,0.06));
+    border: 1px solid rgba(130,190,160,0.25);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.04);
+}
+.pill-weather:hover { background: linear-gradient(145deg, rgba(150,210,190,0.22), rgba(130,195,170,0.10)); }
+.pill-weather .label { color: rgba(160,210,190,0.65); }
+
+/* ═══════════════════════════════════
+   Option C — Frosted (磨砂冰球)
+   ═══════════════════════════════════ */
+.frost-btn {
+    width: 80px; height: 80px; border-radius: 50%; position: relative;
+    display: grid; place-items: center; cursor: pointer;
+    transition: all 0.2s;
+}
+.frost-btn:hover { transform: scale(1.05); }
+.frost-btn .label {
+    position: absolute; bottom: -18px; left: 50%; transform: translateX(-50%);
+    font-size: 9px; font-weight: 600; white-space: nowrap;
+}
+.frost-btn .icon { font-size: 24px; z-index: 1; }
+
+.frost-chat {
+    background: radial-gradient(circle at 45% 35%, rgba(180,160,220,0.2), rgba(140,120,190,0.06) 80%);
+    border: 1px solid rgba(180,160,220,0.22);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.06);
+}
+.frost-chat::before {
+    content:""; position:absolute; inset: 8px; border-radius:50%;
+    border: 1px solid rgba(255,255,255,0.04); pointer-events:none;
+}
+.frost-chat:hover { border-color: rgba(190,170,225,0.38); }
+.frost-chat .label { color: rgba(200,185,230,0.65); }
+
+.frost-dress {
+    background: radial-gradient(circle at 45% 35%, rgba(220,150,170,0.2), rgba(200,130,155,0.06) 80%);
+    border: 1px solid rgba(220,150,170,0.22);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.06);
+}
+.frost-dress::before {
+    content:""; position:absolute; inset: 8px; border-radius:50%;
+    border: 1px solid rgba(255,255,255,0.04); pointer-events:none;
+}
+.frost-dress:hover { border-color: rgba(225,160,180,0.38); }
+.frost-dress .label { color: rgba(225,170,185,0.65); }
+
+.frost-weather {
+    background: radial-gradient(circle at 45% 35%, rgba(140,200,180,0.2), rgba(110,175,150,0.06) 80%);
+    border: 1px solid rgba(140,200,180,0.22);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.06);
+}
+.frost-weather::before {
+    content:""; position:absolute; inset: 8px; border-radius:50%;
+    border: 1px solid rgba(255,255,255,0.04); pointer-events:none;
+}
+.frost-weather:hover { border-color: rgba(150,210,190,0.38); }
+.frost-weather .label { color: rgba(160,210,190,0.65); }
+
+/* ═══════════════════════════════════
+   Option D — Line Art (线描轻量)
+   ═══════════════════════════════════ */
+.line-btn {
+    width: 80px; height: 80px; border-radius: 50%; position: relative;
+    display: grid; place-items: center; cursor: pointer;
+    transition: all 0.25s;
+}
+.line-btn .label {
+    position: absolute; bottom: -18px; left: 50%; transform: translateX(-50%);
+    font-size: 9px; font-weight: 600; white-space: nowrap;
+    opacity: 0; transition: opacity 0.2s;
+}
+.line-btn:hover .label { opacity: 1; }
+.line-btn:hover { transform: scale(1.08); }
+
+.line-chat {
+    background: transparent;
+    border: 1.5px dashed rgba(180,160,220,0.25);
+}
+.line-chat:hover { border-color: rgba(190,170,230,0.55); border-style: solid; background: rgba(180,160,220,0.08); }
+.line-chat .icon { font-size: 22px; opacity: 0.5; transition: opacity 0.2s; }
+.line-chat:hover .icon { opacity: 0.9; }
+.line-chat .label { color: rgba(200,185,230,0.65); }
+
+.line-dress {
+    background: transparent;
+    border: 1.5px dashed rgba(220,150,170,0.25);
+}
+.line-dress:hover { border-color: rgba(225,160,180,0.55); border-style: solid; background: rgba(220,150,170,0.08); }
+.line-dress .icon { font-size: 22px; opacity: 0.5; transition: opacity 0.2s; }
+.line-dress:hover .icon { opacity: 0.9; }
+.line-dress .label { color: rgba(225,170,185,0.65); }
+
+.line-weather {
+    background: transparent;
+    border: 1.5px dashed rgba(140,200,180,0.25);
+}
+.line-weather:hover { border-color: rgba(150,210,190,0.55); border-style: solid; background: rgba(140,200,180,0.08); }
+.line-weather .icon { font-size: 22px; opacity: 0.5; transition: opacity 0.2s; }
+.line-weather:hover .icon { opacity: 0.9; }
+.line-weather .label { color: rgba(160,210,190,0.65); }
+
+/* ═══════════════════════════════════
+   Color legend row
+   ═══════════════════════════════════ */
+.color-row { display:flex; gap:16px; justify-content:center; margin-bottom: 20px; flex-wrap:wrap; }
+.color-chip { display:flex; align-items:center; gap:6px; font-size:0.7rem; color:#94a3b8; }
+.color-chip .dot { width:12px; height:12px; border-radius:3px; }
+.dot-c { background:rgba(180,160,220,0.8); }
+.dot-d { background:rgba(220,150,170,0.8); }
+.dot-w { background:rgba(140,200,180,0.8); }
+
+.section-label { text-align:center; font-size:0.72rem; color:#64748b; letter-spacing:0.05em; margin-bottom:12px; }
+</style>
+</head>
+<body>
+
+<h1>🔘 Action Buttons 重设计</h1>
+<p class="sub">聊天 / 换装 / 天气 — 4 种风格，素净不单调</p>
+
+<div class="color-row">
+    <div class="color-chip"><div class="dot dot-c"></div> 聊天 (紫)</div>
+    <div class="color-chip"><div class="dot dot-d"></div> 换装 (粉)</div>
+    <div class="color-chip"><div class="dot dot-w"></div> 天气 (绿)</div>
+</div>
+
+<!-- ═══ OLD ═══ -->
+<div class="section-label">▼ 当前样式</div>
+<div class="compare-row">
+    <div class="option-card">
+        <h3>❌ 当前</h3>
+        <div class="stage">
+            <div class="old-btn old-chat"><div class="gloss"></div><div class="icon">💬</div><div class="label">聊天</div></div>
+            <div class="old-btn old-dress"><div class="gloss"></div><div class="icon">👗</div><div class="label">换装</div></div>
+            <div class="old-btn old-weather"><div class="gloss"></div><div class="icon">🌤</div><div class="label">天气</div></div>
+        </div>
+        <div class="desc">浓色径向渐变 + 强光泽 + 投影。视觉偏重。</div>
+        <span class="tag tag-now">当前</span>
+    </div>
+</div>
+
+<!-- ═══ Option A ═══ -->
+<div class="section-label">▼ 方案 A · Matcha Ring 抹茶圈</div>
+<div class="compare-row">
+    <div class="option-card">
+        <h3>A. 抹茶圈</h3>
+        <div class="stage">
+            <div class="ring-btn ring-chat"><div class="icon">💬</div><div class="label">聊天</div></div>
+            <div class="ring-btn ring-dress"><div class="icon">👗</div><div class="label">换装</div></div>
+            <div class="ring-btn ring-weather"><div class="icon">🌤</div><div class="label">天气</div></div>
+        </div>
+        <div class="desc">细彩圈 + 极淡底色。hover 时边框变亮。</div>
+        <span class="tag tag-new">素净</span>
+    </div>
+</div>
+
+<!-- ═══ Option B ═══ -->
+<div class="section-label">▼ 方案 B · Soft Pill 柔润胶囊</div>
+<div class="compare-row">
+    <div class="option-card">
+        <h3>B. 柔润胶囊</h3>
+        <div class="stage">
+            <div class="pill-btn pill-chat"><div class="icon">💬</div><div class="label">聊天</div></div>
+            <div class="pill-btn pill-dress"><div class="icon">👗</div><div class="label">换装</div></div>
+            <div class="pill-btn pill-weather"><div class="icon">🌤</div><div class="label">天气</div></div>
+        </div>
+        <div class="desc">圆角方形 + 渐变底色 + 内高光。比圆形更温和。</div>
+        <span class="tag tag-new">柔和</span>
+    </div>
+</div>
+
+<!-- ═══ Option C ═══ -->
+<div class="section-label">▼ 方案 C · Frosted 磨砂冰球</div>
+<div class="compare-row">
+    <div class="option-card">
+        <h3>C. 磨砂冰球</h3>
+        <div class="stage">
+            <div class="frost-btn frost-chat"><div class="icon">💬</div><div class="label">聊天</div></div>
+            <div class="frost-btn frost-dress"><div class="icon">👗</div><div class="label">换装</div></div>
+            <div class="frost-btn frost-weather"><div class="icon">🌤</div><div class="label">天气</div></div>
+        </div>
+        <div class="desc">淡色径向渐变 + 细边框 + 内环。像结冰的玻璃珠。</div>
+        <span class="tag tag-new">通透</span>
+    </div>
+</div>
+
+<!-- ═══ Option D ═══ -->
+<div class="section-label">▼ 方案 D · Line Art 线描轻量</div>
+<div class="compare-row">
+    <div class="option-card">
+        <h3>D. 线描轻量</h3>
+        <div class="stage">
+            <div class="line-btn line-chat"><div class="icon">💬</div><div class="label">聊天</div></div>
+            <div class="line-btn line-dress"><div class="icon">👗</div><div class="label">换装</div></div>
+            <div class="line-btn line-weather"><div class="icon">🌤</div><div class="label">天气</div></div>
+        </div>
+        <div class="desc">虚线圆圈 + 低透明度 icon。hover 时实线+标签浮现。</div>
+        <span class="tag tag-new">极简</span>
+    </div>
+</div>
+
+<p style="text-align:center; margin-top:22px; font-size:0.75rem; color:#4b5563;">
+    当前样式（第一行）浓色+强光泽，以下四种依次变得更素。<br>
+    确认方案后我写入 radial_menu.py 的 RadialMenuItem.paintEvent。
+</p>
+</body>
+</html>

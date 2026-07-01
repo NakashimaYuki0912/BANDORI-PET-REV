@@ -3202,6 +3202,26 @@ class SettingsWindow(QWidget):
         self._tts_temperature.setValidator(temp_validator)
         layout.addWidget(self._tts_temperature)
 
+        # Volume slider
+        tts_volume_label = BodyLabel(_tr("SettingsWindow.tts_volume", "TTS 播放音量"), page)
+        layout.addWidget(tts_volume_label)
+        tts_volume_row = QHBoxLayout()
+        tts_volume_row.setContentsMargins(0, 0, 0, 0)
+        self._tts_volume_slider = Slider(Qt.Orientation.Horizontal, page)
+        self._tts_volume_slider.setRange(0, 100)
+        self._tts_volume_slider.setValue(70)
+        self._tts_volume_slider.setFixedWidth(240)
+        self._tts_volume_label_pct = BodyLabel("70%", page)
+        self._tts_volume_label_pct.setFixedWidth(40)
+        self._tts_volume_label_pct.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._tts_volume_slider.valueChanged.connect(
+            lambda v: self._tts_volume_label_pct.setText(f"{v}%")
+        )
+        tts_volume_row.addWidget(self._tts_volume_slider)
+        tts_volume_row.addWidget(self._tts_volume_label_pct)
+        tts_volume_row.addStretch()
+        layout.addLayout(tts_volume_row)
+
         tts_stream_row = QHBoxLayout()
         tts_stream_row.setContentsMargins(0, 0, 0, 0)
         tts_stream_label = BodyLabel(_tr("SettingsWindow.tts_streaming", "启用 TTS 流式请求"), page)
@@ -5671,6 +5691,7 @@ class SettingsWindow(QWidget):
                 "_tts_temperature",
                 "_tts_streaming",
                 "_tts_translate_to_selected_language",
+                "_tts_volume_slider",
             )
         )
 
@@ -6269,6 +6290,11 @@ class SettingsWindow(QWidget):
             self._tts_temperature.setText(str(self._cfg.get("tts_temperature", 0.9)))
             self._tts_streaming.setChecked(bool(self._cfg.get("tts_streaming", True)))
             self._tts_translate_to_selected_language.setChecked(bool(self._cfg.get("tts_translate_to_selected_language", True)))
+            try:
+                vol = int(round(float(self._cfg.get("tts_volume", 0.7)) * 100))
+            except (TypeError, ValueError):
+                vol = 70
+            self._tts_volume_slider.setValue(max(0, min(100, vol)))
 
     def _on_pov_mode_changed(self, index: int):
         mode = self._pov_mode.itemData(index) or "off"
@@ -6464,6 +6490,7 @@ class SettingsWindow(QWidget):
             "tts_temperature": temperature,
             "tts_streaming": self._tts_streaming.isChecked(),
             "tts_translate_to_selected_language": self._tts_translate_to_selected_language.isChecked(),
+            "tts_volume": self._tts_volume_slider.value() / 100.0,
         }
         if include_llm and self._cfg:
             for key in (
@@ -6542,6 +6569,7 @@ class SettingsWindow(QWidget):
             self._tts_test_player = TTSPlayer(self)
             self._tts_test_player.error.connect(self._on_tts_test_error)
             self._tts_test_player.playback_finished.connect(self._on_tts_test_playback_finished)
+            self._tts_test_player.set_volume(self._tts_volume_slider.value() / 100.0)
         self._tts_test_worker = TTSRequestWorker(0, 0, test_text, test_character, config, self)
         self._tts_test_worker.audio_ready.connect(self._on_tts_test_audio_ready)
         self._tts_test_worker.error.connect(self._on_tts_test_error)

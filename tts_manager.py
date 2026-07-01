@@ -791,9 +791,17 @@ class TTSPlayer(QObject):
         self._current_pos = 0
         self._level = 0.0
         self._playback_active = False
+        self._volume = 0.7
         self._level_timer = QTimer(self)
         self._level_timer.setInterval(33)
         self._level_timer.timeout.connect(self._emit_level)
+
+    def set_volume(self, value: float):
+        """Set playback volume.  Range 0.0 (mute) to 1.0 (full)."""
+        self._volume = max(0.0, min(1.0, float(value)))
+
+    def volume(self) -> float:
+        return self._volume
 
     def stop(self):
         try:
@@ -882,6 +890,9 @@ class TTSPlayer(QObject):
             available = len(self._current_chunk) - self._current_pos
             take = min(available, frames - filled)
             chunk = self._current_chunk[self._current_pos:self._current_pos + take]
+            # Apply volume
+            if self._volume < 0.999:
+                chunk = chunk * self._volume
             rms = float(np.sqrt(np.mean(chunk * chunk)))
             peak = float(np.max(np.abs(chunk)))
             self._level = max(self._level, min(max(rms * 4.0, peak * 0.35), 0.55))

@@ -62,25 +62,25 @@ class MediaRadialItemIntegrationTest(unittest.TestCase):
         cls._app = QApplication.instance() or QApplication([])
 
     def test_media_radial_item_has_three_buttons(self):
-        w = MediaRadialItem(style="ghost_acrylic")
+        w = MediaRadialItem(style="aurora")
         self.assertIsNotNone(w._prev_btn)
         self.assertIsNotNone(w._play_btn)
         self.assertIsNotNone(w._next_btn)
 
     def test_media_radial_item_is_wider_than_overlay(self):
         """MediaRadialItem is a horizontal card, wider than the old square overlay."""
-        w = MediaRadialItem(style="minimal")
+        w = MediaRadialItem(style="glass")
         self.assertGreater(w.width(), 200)
         self.assertLess(w.width(), 400)
         self.assertLess(w.height(), 160)
 
     def test_media_radial_item_empty_state_is_safe(self):
-        w = MediaRadialItem(style="cute")
+        w = MediaRadialItem(style="aurora")
         w.set_snapshot(None)
         self.assertIn("No media", w._app_label.text())
 
     def test_media_radial_item_play_button_emits_play_pause(self):
-        w = MediaRadialItem(style="cyber")
+        w = MediaRadialItem(style="neon")
         commands = []
         w.command_requested.connect(lambda c: commands.append(c))
         w._play_btn.clicked.emit()

@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>抹茶圈 · 图标方案</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+    background: #0b0d12; color: #e2e8f0; padding: 24px 16px; min-height: 100vh;
+}
+h1 { text-align: center; font-size: 1.25rem; margin-bottom: 4px; }
+.sub { text-align: center; color: #64748b; font-size: 0.78rem; margin-bottom: 28px; }
+
+.ring-btn {
+    width: 80px; height: 80px; border-radius: 50%; position: relative;
+    display: grid; place-items: center; cursor: pointer;
+    transition: all 0.2s;
+    background: rgba(140,200,180,0.08);
+    border: 2px solid rgba(120,190,160,0.35);
+}
+.ring-btn:hover { border-color: rgba(140,200,170,0.6); background: rgba(140,200,180,0.14); transform: scale(1.06); }
+.ring-btn .label {
+    position: absolute; bottom: -18px; left: 50%; transform: translateX(-50%);
+    font-size: 9px; font-weight: 600; color: rgba(160,210,190,0.7); white-space: nowrap;
+}
+
+.icon-set { display: flex; gap: 24px; justify-content: center; flex-wrap: wrap; margin-bottom: 32px; }
+.icon-col {
+    background: #11141b; border: 1px solid #1e2230; border-radius: 14px;
+    padding: 18px 14px 14px; display: flex; flex-direction: column;
+    align-items: center; gap: 10px; width: 240px;
+}
+.icon-col h3 { font-size: 0.78rem; font-weight: 700; }
+.icon-col .row { display: flex; gap: 16px; align-items: center; }
+
+.stage {
+    width: 220px; height: 180px; border-radius: 14px;
+    background: radial-gradient(ellipse at center, #1a1d28 0%, #0d1018 100%);
+    display: flex; align-items: center; justify-content: center;
+    gap: 16px; border: 1px solid #1e2430;
+}
+
+/* Glyph styles */
+.glyph-emoji { font-size: 28px; line-height: 1; }
+.glyph-symbol { font-size: 26px; line-height: 1; font-weight: 300; font-family: 'Segoe UI Symbol', 'Apple Symbols', sans-serif; }
+.glyph-text { font-size: 22px; font-weight: 700; line-height: 1; letter-spacing: 0.02em; }
+.glyph-line { font-size: 30px; font-weight: 200; line-height: 1; }
+
+.tag-current { display: inline-block; font-size: 0.6rem; padding: 2px 8px; border-radius: 999px; background: #3b1a1a; color: #f87171; }
+.tag-proposed { display: inline-block; font-size: 0.6rem; padding: 2px 8px; border-radius: 999px; background: #1a3b2a; color: #4ade80; }
+.tag-alt { display: inline-block; font-size: 0.6rem; padding: 2px 8px; border-radius: 999px; background: #1a2a3b; color: #60a5fa; }
+
+.note { font-size: 0.68rem; color: #7b89a1; text-align: center; line-height: 1.5; margin-top: 6px; }
+</style>
+</head>
+<body>
+
+<h1>🍵 抹茶圈 · 图标方案</h1>
+<p class="sub">同一套圈圈风格，换不同图标试试</p>
+
+<!-- ═══ Set 1: Current Emoji ═══ -->
+<div class="icon-set">
+    <div class="icon-col">
+        <h3>当前 Emoji</h3>
+        <div class="stage">
+            <div class="ring-btn"><span class="glyph-emoji">💬</span><div class="label">聊天</div></div>
+            <div class="ring-btn"><span class="glyph-emoji">👗</span><div class="label">换装</div></div>
+            <div class="ring-btn"><span class="glyph-emoji">🌤</span><div class="label">天气</div></div>
+        </div>
+        <div class="note">彩色卡通表情，与素圈风格冲突</div>
+        <span class="tag-current">问题</span>
+    </div>
+
+    <!-- ═══ Set 2: Elegant Symbols ═══ -->
+    <div class="icon-col">
+        <h3>优雅符号</h3>
+        <div class="stage">
+            <div class="ring-btn"><span class="glyph-symbol">◈</span><div class="label">聊天</div></div>
+            <div class="ring-btn"><span class="glyph-symbol">✦</span><div class="label">换装</div></div>
+            <div class="ring-btn"><span class="glyph-symbol">◉</span><div class="label">天气</div></div>
+        </div>
+        <div class="note">几何符号，低饱和度，与圈线统一</div>
+        <span class="tag-proposed">推荐</span>
+    </div>
+
+    <!-- ═══ Set 3: Minimal text ═══ -->
+    <div class="icon-col">
+        <h3>极简文字</h3>
+        <div class="stage">
+            <div class="ring-btn"><span class="glyph-text">CH</span><div class="label">聊天</div></div>
+            <div class="ring-btn"><span class="glyph-text">衣</span><div class="label">换装</div></div>
+            <div class="ring-btn"><span class="glyph-text">天</span><div class="label">天气</div></div>
+        </div>
+        <div class="note">单字/双字母，极度克制</div>
+        <span class="tag-alt">备选</span>
+    </div>
+
+    <!-- ═══ Set 4: Line Icons ═══ -->
+    <div class="icon-col">
+        <h3>线描图标</h3>
+        <div class="stage">
+            <div class="ring-btn"><span class="glyph-line">☷</span><div class="label">聊天</div></div>
+            <div class="ring-btn"><span class="glyph-line">✂</span><div class="label">换装</div></div>
+            <div class="ring-btn"><span class="glyph-line">☁</span><div class="label">天气</div></div>
+        </div>
+        <div class="note">Unicode 线描字符，与圈线呼应</div>
+        <span class="tag-alt">备选</span>
+    </div>
+</div>
+
+<!-- ═══ Set 5–7: More options ═══ -->
+<div class="icon-set">
+    <div class="icon-col">
+        <h3>单色 Emoji</h3>
+        <div class="stage">
+            <div class="ring-btn"><span class="glyph-emoji" style="filter:grayscale(1) brightness(1.2) saturate(0);">💬</span><div class="label">聊天</div></div>
+            <div class="ring-btn"><span class="glyph-emoji" style="filter:grayscale(1) brightness(1.2) saturate(0);">👗</span><div class="label">换装</div></div>
+            <div class="ring-btn"><span class="glyph-emoji" style="filter:grayscale(1) brightness(1.2) saturate(0);">🌤</span><div class="label">天气</div></div>
+        </div>
+        <div class="note">原 emoji 去色，保留辨识度但去掉彩色</div>
+        <span class="tag-alt">低改动</span>
+    </div>
+
+    <div class="icon-col">
+        <h3>黑底白线 Emoji</h3>
+        <div class="stage">
+            <div class="ring-btn">
+                <span style="font-size:22px; filter:grayscale(1) brightness(2) contrast(1.3);">💬</span>
+                <div class="label">聊天</div>
+            </div>
+            <div class="ring-btn">
+                <span style="font-size:22px; filter:grayscale(1) brightness(2) contrast(1.3);">👗</span>
+                <div class="label">换装</div>
+            </div>
+            <div class="ring-btn">
+                <span style="font-size:22px; filter:grayscale(1) brightness(2) contrast(1.3);">🌤</span>
+                <div class="label">天气</div>
+            </div>
+        </div>
+        <div class="note">emoji 去色+提亮，白色剪影效果</div>
+        <span class="tag-alt">低改动</span>
+    </div>
+
+    <div class="icon-col">
+        <h3>组合方案</h3>
+        <div class="stage">
+            <div class="ring-btn"><span class="glyph-symbol">◈</span><div class="label">聊天</div></div>
+            <div class="ring-btn"><span class="glyph-line">✂</span><div class="label">换装</div></div>
+            <div class="ring-btn"><span class="glyph-line">☁</span><div class="label">天气</div></div>
+        </div>
+        <div class="note">聊天用几何符号，换装/天气用线描</div>
+        <span class="tag-alt">自定义</span>
+    </div>
+</div>
+
+<p style="text-align:center; margin-top:18px; font-size:0.75rem; color:#4b5563;">
+    确认图标方案后，代码只需要改 add_item 的 glyph 参数即可。<br>
+    也可以自行指定每个按钮用什么字符。
+</p>
+</body>
+</html>

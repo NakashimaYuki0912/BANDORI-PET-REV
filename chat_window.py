@@ -1749,6 +1749,11 @@ class ChatWindow(QWidget):
         self._tts_player.level_changed.connect(self._on_tts_level_changed)
         self._tts_player.playback_finished.connect(self._on_tts_playback_finished)
         self._tts_player.error.connect(self._on_tts_player_error)
+        if self._cfg:
+            try:
+                self._tts_player.set_volume(float(self._cfg.get("tts_volume", 0.7)))
+            except (TypeError, ValueError):
+                pass
         self._pending_actions.clear()
         self._seen_actions.clear()
         self._stream_flush_timer = QTimer(self)

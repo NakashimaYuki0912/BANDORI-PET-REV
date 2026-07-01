@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QApplication
 from radial_menu import MediaRadialItem, RadialMenu, _media_icon
 
 
-_STYLES = ("cute", "cyber", "minimal", "luxury", "ghost_acrylic", "stealth_acrylic")
+_STYLES = ("aurora", "neon", "glass", "velvet", "prism", "blossom", "matcha")
 
 
 def _app():
@@ -30,7 +30,7 @@ class MediaRadialItemStyleTest(unittest.TestCase):
                 w.deleteLater()
 
     def test_cute_style_sets_pink_themed_palette(self):
-        w = MediaRadialItem(style="cute")
+        w = MediaRadialItem(style="aurora")
         ss = w.styleSheet().lower()
         # cute uses pinkish hex colors
         self.assertTrue(any(c in ss for c in ("#ffc0d8", "#ffd9e9", "#ff8cc8")),
@@ -38,7 +38,7 @@ class MediaRadialItemStyleTest(unittest.TestCase):
         w.deleteLater()
 
     def test_cyber_style_sets_dark_neon_palette(self):
-        w = MediaRadialItem(style="cyber")
+        w = MediaRadialItem(style="neon")
         ss = w.styleSheet().lower()
         # cyber uses neon teal/cyan hex (#00ffff, #00ffcc)
         self.assertTrue(any(c in ss for c in ("#65f2e7", "#7efff2", "#57a5ff")),
@@ -46,7 +46,7 @@ class MediaRadialItemStyleTest(unittest.TestCase):
         w.deleteLater()
 
     def test_minimal_style_is_monochrome_no_gradient(self):
-        w = MediaRadialItem(style="minimal")
+        w = MediaRadialItem(style="glass")
         ss = w.styleSheet()
         # Minimal avoids qlineargradient/qradialgradient
         self.assertNotIn("qlineargradient", ss.lower())
@@ -54,7 +54,7 @@ class MediaRadialItemStyleTest(unittest.TestCase):
         w.deleteLater()
 
     def test_luxury_style_has_gold_tone(self):
-        w = MediaRadialItem(style="luxury")
+        w = MediaRadialItem(style="velvet")
         ss = w.styleSheet().lower()
         # luxury uses gold-ish hex (#c8a84e, #d4c088)
         self.assertTrue(any(c in ss for c in ("#d7bd74", "#f4d57e", "#c99945")),
@@ -62,15 +62,15 @@ class MediaRadialItemStyleTest(unittest.TestCase):
         w.deleteLater()
 
     def test_ghost_acrylic_default_state_is_still_clearly_visible(self):
-        w = MediaRadialItem(style="ghost_acrylic")
-        self.assertIn("ghost_acrylic", w.objectName())
+        w = MediaRadialItem(style="aurora")
+        self.assertIn("aurora", w.objectName())
         effect = w.graphicsEffect()
         if effect is not None:
             self.assertGreaterEqual(effect.opacity(), 0.72)
         w.deleteLater()
 
     def test_ghost_acrylic_hover_increases_visibility(self):
-        w = MediaRadialItem(style="ghost_acrylic")
+        w = MediaRadialItem(style="aurora")
         w._hover = False
         w._sync_hover_style()
         default_opacity = w.graphicsEffect().opacity() if w.graphicsEffect() else 1.0
@@ -84,7 +84,7 @@ class MediaRadialItemStyleTest(unittest.TestCase):
         w.deleteLater()
 
     def test_stealth_acrylic_stays_quiet_until_hover(self):
-        w = MediaRadialItem(style="stealth_acrylic")
+        w = MediaRadialItem(style="prism")
         w._hover = False
         w._sync_hover_style()
         default_opacity = w.graphicsEffect().opacity() if w.graphicsEffect() else 1.0
@@ -99,20 +99,19 @@ class MediaRadialItemStyleTest(unittest.TestCase):
 
     def test_invalid_style_falls_back_to_ghost_acrylic(self):
         w = MediaRadialItem(style="nonexistent_style")
-        self.assertIn("ghost_acrylic", w.objectName())
+        self.assertIn("aurora", w.objectName())
         w.deleteLater()
 
     def test_widget_dimensions_fit_media_card(self):
-        w = MediaRadialItem(style="minimal")
-        # Wider than tall (media card shape)
+        w = MediaRadialItem(style="glass")
+        # Match the horizontal style cards shown in the media style preview.
         self.assertGreater(w.width(), w.height())
-        # Match the mockup's actual .media-card, not the larger style preview cards.
-        self.assertEqual(w.width(), 212)
-        self.assertEqual(w.height(), 128)
+        self.assertGreaterEqual(w.width(), 360)
+        self.assertEqual(w.height(), 152)
         w.deleteLater()
 
     def test_control_buttons_are_centered_like_style_mockup(self):
-        w = MediaRadialItem(style="cyber")
+        w = MediaRadialItem(style="neon")
         w.show()
         self._app.processEvents()
 
@@ -125,7 +124,7 @@ class MediaRadialItemStyleTest(unittest.TestCase):
         w.deleteLater()
 
     def test_controls_are_structurally_independent_from_meta_and_menu(self):
-        w = MediaRadialItem(style="luxury")
+        w = MediaRadialItem(style="velvet")
         self.assertIs(w._style_menu_button.parent(), w)
         self.assertIs(w._app_label.parent(), w)
         self.assertIs(w._track_label.parent(), w)
@@ -135,7 +134,7 @@ class MediaRadialItemStyleTest(unittest.TestCase):
         w.deleteLater()
 
     def test_controls_widget_content_is_centered_inside_card(self):
-        w = MediaRadialItem(style="cyber")
+        w = MediaRadialItem(style="neon")
         w.show()
         self._app.processEvents()
 
@@ -152,14 +151,14 @@ class MediaRadialItemStyleTest(unittest.TestCase):
         w.deleteLater()
 
     def test_control_buttons_are_compact(self):
-        w = MediaRadialItem(style="cyber")
+        w = MediaRadialItem(style="neon")
         self.assertEqual((w._prev_btn.width(), w._prev_btn.height()), (36, 30))
         self.assertEqual((w._next_btn.width(), w._next_btn.height()), (36, 30))
         self.assertEqual((w._play_btn.width(), w._play_btn.height()), (44, 30))
         w.deleteLater()
 
     def test_controls_layout_has_no_hidden_margins(self):
-        w = MediaRadialItem(style="cyber")
+        w = MediaRadialItem(style="neon")
         margins = w._controls_layout.contentsMargins()
         self.assertEqual((margins.left(), margins.top(), margins.right(), margins.bottom()), (0, 0, 0, 0))
         self.assertEqual(w._controls_layout.spacing(), 10)
@@ -167,11 +166,31 @@ class MediaRadialItemStyleTest(unittest.TestCase):
         self.assertEqual(w._controls_widget.height(), 30)
         w.deleteLater()
 
+    def test_controls_stay_centered_in_wide_preview_card(self):
+        w = MediaRadialItem(style="aurora")
+        w.show()
+        self._app.processEvents()
+
+        panel_rect = w._panel_rect()
+        controls = w._controls_widget.geometry()
+        self.assertAlmostEqual(
+            controls.center().x() + 0.5,
+            panel_rect.left() + panel_rect.width() / 2,
+            delta=1.0,
+        )
+        self.assertGreater(
+            controls.left() - panel_rect.left(),
+            100,
+            "wide media card controls must not hug the top-left content area",
+        )
+        w.hide()
+        w.deleteLater()
+
     def test_rendered_button_cluster_center_matches_rendered_panel(self):
-        for style in ("cute", "cyber", "minimal", "luxury", "stealth_acrylic"):
+        for style in ("aurora", "neon", "glass", "velvet", "prism"):
             with self.subTest(style=style):
                 w = MediaRadialItem(style=style)
-                if style == "stealth_acrylic":
+                if style == "prism":
                     w._hover = True
                     w._sync_hover_style()
                 w.show()
@@ -224,13 +243,13 @@ class MediaRadialItemStyleTest(unittest.TestCase):
                 self.assertAlmostEqual(bbox_center_y, 15.5, delta=0.6)
 
     def test_style_switcher_button_exists_in_top_right(self):
-        w = MediaRadialItem(style="ghost_acrylic")
+        w = MediaRadialItem(style="aurora")
         self.assertIsNotNone(w._style_menu_button)
         self.assertEqual(w._style_menu_button.text(), "...")
         w.deleteLater()
 
     def test_ghost_acrylic_grabbed_panel_is_visible_on_white_background(self):
-        w = MediaRadialItem(style="ghost_acrylic")
+        w = MediaRadialItem(style="aurora")
         w.move(-10000, -10000)
         w.show()
         self._app.processEvents()
@@ -243,7 +262,7 @@ class MediaRadialItemStyleTest(unittest.TestCase):
         self.assertLess(center.blue(), 205)
 
     def test_acrylic_panel_paint_reaches_bottom_edge(self):
-        w = MediaRadialItem(style="ghost_acrylic")
+        w = MediaRadialItem(style="aurora")
         w.move(-10000, -10000)
         w.show()
         self._app.processEvents()
@@ -263,14 +282,14 @@ class MediaRadialItemEmptyStateTest(unittest.TestCase):
         cls._app = _app()
 
     def test_set_no_snapshot_shows_placeholder(self):
-        w = MediaRadialItem(style="ghost_acrylic")
+        w = MediaRadialItem(style="aurora")
         w.set_snapshot(None)
         # Must not crash; app label shows placeholder
         self.assertTrue(len(w._app_label.text()) > 0)
         w.deleteLater()
 
     def test_set_no_snapshot_keeps_two_line_card_structure(self):
-        w = MediaRadialItem(style="cyber")
+        w = MediaRadialItem(style="neon")
         w.set_snapshot(None)
         self.assertEqual(w._app_label.text(), "No media")
         self.assertTrue(
@@ -281,7 +300,7 @@ class MediaRadialItemEmptyStateTest(unittest.TestCase):
 
     def test_set_no_snapshot_buttons_still_exist(self):
         """Even without media, the three buttons should exist (though may be disabled)."""
-        w = MediaRadialItem(style="ghost_acrylic")
+        w = MediaRadialItem(style="aurora")
         w.set_snapshot(None)
         self.assertIsNotNone(w._prev_btn)
         self.assertIsNotNone(w._play_btn)
@@ -297,7 +316,7 @@ class MediaRadialItemCommandTest(unittest.TestCase):
         cls._app = _app()
 
     def test_prev_button_emits_previous_command(self):
-        w = MediaRadialItem(style="cyber")
+        w = MediaRadialItem(style="neon")
         commands = []
 
         def collect(cmd):
@@ -309,7 +328,7 @@ class MediaRadialItemCommandTest(unittest.TestCase):
         w.deleteLater()
 
     def test_buttons_use_real_icons_not_text_glyphs(self):
-        w = MediaRadialItem(style="ghost_acrylic")
+        w = MediaRadialItem(style="aurora")
         self.assertTrue(w._prev_btn.text().strip() == "")
         self.assertTrue(w._play_btn.text().strip() == "")
         self.assertTrue(w._next_btn.text().strip() == "")
@@ -319,7 +338,7 @@ class MediaRadialItemCommandTest(unittest.TestCase):
         w.deleteLater()
 
     def test_play_button_emits_play_pause_command(self):
-        w = MediaRadialItem(style="cute")
+        w = MediaRadialItem(style="aurora")
         commands = []
 
         def collect(cmd):
@@ -331,7 +350,7 @@ class MediaRadialItemCommandTest(unittest.TestCase):
         w.deleteLater()
 
     def test_next_button_emits_next_command(self):
-        w = MediaRadialItem(style="minimal")
+        w = MediaRadialItem(style="glass")
         commands = []
 
         def collect(cmd):
@@ -351,9 +370,9 @@ class MediaRadialItemStyleSwitchingTest(unittest.TestCase):
         cls._app = _app()
 
     def test_set_style_rebuilds_stylesheet(self):
-        w = MediaRadialItem(style="cute")
+        w = MediaRadialItem(style="aurora")
         cute_ss = w.styleSheet()
-        w.set_style("cyber")
+        w.set_style("neon")
         cyber_ss = w.styleSheet()
         self.assertNotEqual(cute_ss, cyber_ss,
                             "set_style must rebuild the stylesheet")
@@ -362,22 +381,22 @@ class MediaRadialItemStyleSwitchingTest(unittest.TestCase):
     def test_set_style_preserves_snapshot(self):
         from media_session_manager import MediaSessionSnapshot
 
-        w = MediaRadialItem(style="minimal")
+        w = MediaRadialItem(style="glass")
         snap = MediaSessionSnapshot("Spotify", "Test", "Artist", "", "playing")
         w.set_snapshot(snap)
-        w.set_style("luxury")
+        w.set_style("velvet")
         self.assertIn("Spotify", w._app_label.text())
         w.deleteLater()
 
     def test_select_style_updates_style_and_emits_signal(self):
-        w = MediaRadialItem(style="cute")
+        w = MediaRadialItem(style="aurora")
         seen = []
         w.style_selected.connect(lambda style: seen.append(style))
 
-        w._select_style("cyber")
+        w._select_style("neon")
 
-        self.assertEqual(w.style_name, "cyber")
-        self.assertIn("cyber", seen)
+        self.assertEqual(w.style_name, "neon")
+        self.assertIn("neon", seen)
         w.deleteLater()
 
 
@@ -390,7 +409,7 @@ class RadialMenuMediaLayoutTest(unittest.TestCase):
 
     def test_media_item_animation_ends_inside_menu_bounds(self):
         menu = RadialMenu()
-        media = menu.add_media_item(style="ghost_acrylic")
+        media = menu.add_media_item(style="aurora")
         menu.add_item("", "Chat", QColor("#9b4dff"), lambda: None, glyph="C")
         menu.add_item("", "Dress", QColor("#ef4d9b"), lambda: None, glyph="D")
         menu.add_item("", "Weather", QColor("#27a7e7"), lambda: None, glyph="W")
@@ -413,7 +432,7 @@ class RadialMenuMediaLayoutTest(unittest.TestCase):
 
     def test_crescent_layout_places_media_right_and_actions_left(self):
         menu = RadialMenu()
-        media = menu.add_media_item(style="cyber")
+        media = menu.add_media_item(style="neon")
         menu.add_item("", "Chat", QColor("#9b4dff"), lambda: None, glyph="C")
         menu.add_item("", "Dress", QColor("#ef4d9b"), lambda: None, glyph="D")
         menu.add_item("", "Weather", QColor("#27a7e7"), lambda: None, glyph="W")
@@ -439,7 +458,7 @@ class RadialMenuMediaLayoutTest(unittest.TestCase):
 
     def test_crescent_layout_keeps_action_buttons_out_of_pet_core(self):
         menu = RadialMenu()
-        menu.add_media_item(style="ghost_acrylic")
+        menu.add_media_item(style="aurora")
         for label in ("Chat", "Dress", "Weather", "Like"):
             menu.add_item("", label, QColor("#9b4dff"), lambda: None, glyph=label[0])
 
@@ -463,7 +482,7 @@ class RadialMenuMediaLayoutTest(unittest.TestCase):
 
     def test_show_at_clamps_menu_to_visible_screen(self):
         menu = RadialMenu()
-        menu.add_media_item(style="ghost_acrylic")
+        menu.add_media_item(style="aurora")
         menu.add_item("", "Chat", QColor("#9b4dff"), lambda: None, glyph="C")
         menu.add_item("", "Dress", QColor("#ef4d9b"), lambda: None, glyph="D")
         menu.add_item("", "Weather", QColor("#27a7e7"), lambda: None, glyph="W")
@@ -484,7 +503,7 @@ class RadialMenuMediaLayoutTest(unittest.TestCase):
 
     def test_show_at_preserves_anchor_after_screen_clamp(self):
         menu = RadialMenu()
-        menu.add_media_item(style="ghost_acrylic")
+        menu.add_media_item(style="aurora")
         menu.add_item("", "Chat", QColor("#9b4dff"), lambda: None, glyph="C")
         menu.add_item("", "Dress", QColor("#ef4d9b"), lambda: None, glyph="D")
         menu.add_item("", "Weather", QColor("#27a7e7"), lambda: None, glyph="W")

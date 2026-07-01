@@ -212,6 +212,11 @@ class CompactAIWindow(QWidget):
         self._tts_player = TTSPlayer(self)
         self._tts_player.level_changed.connect(self._on_tts_level_changed)
         self._tts_player.playback_finished.connect(self._on_tts_playback_finished)
+        if self._cfg:
+            try:
+                self._tts_player.set_volume(float(self._cfg.get("tts_volume", 0.7)))
+            except (TypeError, ValueError):
+                pass
         self._external_stream_text = ""
         self._clear_timer = QTimer(self)
         self._clear_timer.setSingleShot(True)

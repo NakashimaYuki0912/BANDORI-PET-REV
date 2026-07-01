@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>亮色风格追加 · 设计草图</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+    background: #0b0d12; color: #e2e8f0; padding: 28px 20px; min-height: 100vh;
+}
+h1 { text-align: center; font-size: 1.4rem; margin-bottom: 4px; }
+.sub { text-align: center; color: #64748b; font-size: 0.82rem; margin-bottom: 28px; }
+
+.row { display: flex; gap: 20px; justify-content: center; flex-wrap: wrap; margin-bottom: 28px; }
+.section-label {
+    width: 100%; text-align: center; font-size: 0.8rem; color: #94a3b8;
+    letter-spacing: 0.05em; margin-bottom: 4px;
+}
+
+.style-demo {
+    background: #11141b; border: 1px solid #1e2230; border-radius: 16px;
+    padding: 22px 18px 18px; display: flex; flex-direction: column;
+    align-items: center; gap: 10px; width: 350px;
+}
+.style-demo h3 { font-size: 0.9rem; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+.style-demo .tag {
+    font-size: 0.6rem; padding: 2px 8px; border-radius: 999px; background: #1e2430; color: #94a3b8;
+}
+.style-demo .desc { font-size: 0.73rem; color: #7b89a1; text-align: center; line-height: 1.5; }
+
+/* ── Card base ── */
+.card {
+    position: relative; width: 310px; height: 144px; border-radius: 18px; overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+    transition: transform 0.2s;
+}
+.card:hover { transform: translateY(-2px); }
+.card .app { font-size: 10px; font-weight: 700; }
+.card .track { font-size: 11px; font-weight: 600; line-height: 1.35; }
+.card .menu {
+    position: absolute; width: 24px; height: 24px; border-radius: 12px;
+    display: grid; place-items: center; font-weight: 700; font-size: 12px; cursor: pointer;
+    top: 10px; right: 10px;
+}
+.card .ctrls {
+    position: absolute; display: flex; align-items: center; justify-content: center;
+    gap: 10px; left: 0; right: 0; bottom: 22px;
+}
+.btn {
+    width: 34px; height: 26px; border-radius: 13px;
+    display: grid; place-items: center;
+    cursor: pointer; font-weight: 900; border: none; font-size: 12px;
+    transition: all 0.12s;
+}
+.btn:hover { filter: brightness(1.15); }
+.btn.play { font-size: 14px; }
+
+/* ═══════════════════════════════════
+   现有 5 种暗色风格 (引用)
+   ═══════════════════════════════════ */
+.aurora {
+    background:
+        radial-gradient(ellipse at 82% 12%, rgba(180,240,255,0.35) 0 28px, transparent 30px),
+        radial-gradient(ellipse at 15% 85%, rgba(200,140,255,0.28) 0 48px, transparent 50px),
+        radial-gradient(ellipse at 55% 50%, rgba(255,160,200,0.18) 0 80px, transparent 82px),
+        linear-gradient(160deg, #1a1628 0%, #201a2e 35%, #241e32 65%, #1c1a2b 100%);
+    border: 1px solid rgba(180,160,220,0.25);
+}
+.aurora .app { color: rgba(210,195,240,0.8); }
+.aurora .track { color: rgba(235,225,250,0.92); }
+.aurora .menu {
+    background: rgba(255,255,255,0.10); border:1px solid rgba(180,160,220,0.18); color:rgba(210,195,240,0.7);
+}
+.aurora .btn {
+    background: rgba(225,205,250,0.45); color: rgba(235,225,250,0.9);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.1);
+}
+.aurora .btn.play {
+    background: linear-gradient(135deg, rgba(200,155,240,0.82), rgba(160,115,220,0.73)); color:#fff;
+}
+
+.neon {
+    background:
+        repeating-linear-gradient(0deg, rgba(0,240,255,0.025) 0 2px, transparent 2px 4px),
+        linear-gradient(160deg, #0a121f 0%, #0c1626 50%, #0a111c 100%);
+    border: 1px solid rgba(0,210,240,0.35);
+}
+.neon::after {
+    content:""; position:absolute; left:-20%; right:-20%; top:46%; height:1.5px;
+    background: linear-gradient(90deg,transparent,rgba(0,220,255,0.4),rgba(255,50,150,0.3),rgba(0,220,255,0.4),transparent);
+    transform:rotate(-5deg);
+}
+.neon .app { color: rgba(100,230,245,0.75); }
+.neon .track { color: rgba(200,248,255,0.9); }
+.neon .menu {
+    background:rgba(0,180,210,0.10); border:1px solid rgba(0,200,230,0.2); color:rgba(100,230,245,0.6);
+}
+.neon .btn {
+    background: rgba(0,200,240,0.47); color: rgba(200,245,255,0.9);
+    border: 1px solid rgba(0,230,255,0.25);
+}
+.neon .btn.play {
+    background: linear-gradient(135deg, rgba(0,230,255,0.86), rgba(255,40,140,0.67)); color:#fff;
+}
+
+.glass {
+    background: linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03));
+    border: 1px solid rgba(255,255,255,0.14);
+}
+.glass .app { color: rgba(255,255,255,0.6); }
+.glass .track { color: rgba(255,255,255,0.88); }
+.glass .menu {
+    background:rgba(255,255,255,0.08); color:rgba(255,255,255,0.5);
+}
+.glass .btn {
+    background: rgba(255,255,255,0.51); color: rgba(255,255,255,0.9);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.15);
+}
+.glass .btn.play { background: rgba(255,255,255,0.75); color: #2a2a3a; }
+
+.velvet {
+    background:
+        radial-gradient(ellipse at 80% 15%, rgba(180,140,90,0.06) 0 30px, transparent 32px),
+        radial-gradient(ellipse at 20% 80%, rgba(160,100,60,0.05) 0 48px, transparent 50px),
+        linear-gradient(160deg, #18141e 0%, #1a1522 30%, #1c1624 60%, #17131d 100%);
+    border: 1px solid rgba(180,150,100,0.22);
+}
+.velvet .app { color: rgba(200,170,130,0.65); }
+.velvet .track { color: rgba(235,220,200,0.85); }
+.velvet .menu {
+    background:rgba(180,150,100,0.10); border:1px solid rgba(180,150,100,0.14); color:rgba(200,170,130,0.5);
+}
+.velvet .btn {
+    background: rgba(200,170,120,0.45); color: rgba(235,220,200,0.85);
+    border: 1px solid rgba(200,170,120,0.2);
+}
+.velvet .btn.play {
+    background: linear-gradient(135deg, rgba(220,175,105,0.82), rgba(170,130,75,0.69)); color:#fff;
+}
+
+.prism {
+    background:
+        linear-gradient(110deg, rgba(120,140,255,0.08) 0%, transparent 40%),
+        linear-gradient(200deg, rgba(255,120,180,0.06) 30%, transparent 70%),
+        linear-gradient(160deg, #12141d 0%, #161820 50%, #12151c 100%);
+    border: 1px solid rgba(180,180,200,0.18);
+}
+.prism .app { color: rgba(180,190,220,0.6); }
+.prism .track { color: rgba(220,225,240,0.85); }
+.prism .menu {
+    background:rgba(255,255,255,0.06); border:1px solid rgba(180,180,200,0.12); color:rgba(180,190,220,0.5);
+}
+.prism .btn {
+    background: rgba(195,200,225,0.41); color: rgba(220,225,240,0.85);
+}
+.prism .btn.play {
+    background: linear-gradient(135deg, rgba(150,170,225,0.78), rgba(200,140,190,0.63)); color:#fff;
+}
+
+/* ═══════════════════════════════════
+   亮色系 1 — Blossom (花漾粉)
+   ═══════════════════════════════════ */
+.blossom {
+    background:
+        radial-gradient(ellipse at 85% 10%, rgba(255,200,220,0.55) 0 36px, transparent 38px),
+        radial-gradient(ellipse at 15% 80%, rgba(255,180,200,0.35) 0 48px, transparent 50px),
+        radial-gradient(ellipse at 55% 50%, rgba(255,255,255,0.25) 0 90px, transparent 92px),
+        linear-gradient(150deg, #fff5f8 0%, #ffe8f0 35%, #fff0f5 65%, #fce4ec 100%);
+    border: 1px solid rgba(230,120,160,0.30);
+    box-shadow: 0 0 30px rgba(240,130,160,0.08), 0 4px 18px rgba(0,0,0,0.06);
+}
+.blossom .app { color: #b0496b; }
+.blossom .track { color: #4a2535; }
+.blossom .menu {
+    background: rgba(255,255,255,0.65); border: 1px solid rgba(220,130,160,0.25);
+    color: #c06080;
+}
+.blossom .btn {
+    background: rgba(255,255,255,0.75); color: #7a3a52;
+    box-shadow: 0 1px 3px rgba(200,100,140,0.10), inset 0 1px 0 rgba(255,255,255,0.8);
+    border: 1px solid rgba(220,140,170,0.20);
+}
+.blossom .btn.play {
+    background: linear-gradient(135deg, #f58ab0, #e85d90);
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(230,100,150,0.25);
+    border: none;
+}
+.blossom .btn:hover { background: rgba(255,255,255,0.92); }
+.blossom .btn.play:hover { background: linear-gradient(135deg, #f79ac0, #ef70a0); }
+
+/* ═══════════════════════════════════
+   亮色系 2 — Matcha (抹茶绿)
+   ═══════════════════════════════════ */
+.matcha {
+    background:
+        radial-gradient(ellipse at 80% 12%, rgba(160,230,200,0.40) 0 34px, transparent 36px),
+        radial-gradient(ellipse at 20% 75%, rgba(140,210,180,0.30) 0 42px, transparent 44px),
+        linear-gradient(155deg, #f6fdf9 0%, #ebfaf2 35%, #f2fcf6 65%, #e8f6ef 100%);
+    border: 1px solid rgba(100,190,150,0.28);
+    box-shadow: 0 0 28px rgba(80,200,140,0.06), 0 4px 16px rgba(0,0,0,0.05);
+}
+.matcha .app { color: #3b7a5c; }
+.matcha .track { color: #1e3a2e; }
+.matcha .menu {
+    background: rgba(255,255,255,0.6); border: 1px solid rgba(120,190,150,0.22);
+    color: #48906a;
+}
+.matcha .btn {
+    background: rgba(255,255,255,0.72); color: #2e5a42;
+    box-shadow: 0 1px 3px rgba(80,160,120,0.10), inset 0 1px 0 rgba(255,255,255,0.8);
+    border: 1px solid rgba(130,200,160,0.18);
+}
+.matcha .btn.play {
+    background: linear-gradient(135deg, #5cc492, #3da870);
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(60,170,110,0.22);
+    border: none;
+}
+.matcha .btn:hover { background: rgba(255,255,255,0.92); }
+.matcha .btn.play:hover { background: linear-gradient(135deg, #70d0a0, #50b880); }
+
+/* ═══════════════════════════════════
+   Compare: dark vs light side by side
+   ═══════════════════════════════════ */
+.compare-label {
+    text-align: center; font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.05em; margin-top: 8px;
+}
+.tag-dark { background: #2d2535; color: #b8a0d0; display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 0.7rem; }
+.tag-light { background: #fff8e8; color: #8a7030; display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 0.7rem; }
+
+/* ── full grid of all 7 styles ── */
+.grid-7 {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+    gap: 16px;
+    max-width: 1400px;
+    margin: 0 auto 24px;
+}
+
+/* show dark card backgrounds for light styles */
+.bg-checker {
+    position: relative;
+    padding: 18px;
+    border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+}
+.bg-checker.dark-bg { background: #1a1d28; }
+.bg-checker.light-bg { background: #e8ecf2; }
+
+.summary-box {
+    max-width: 800px; margin: 28px auto; padding: 18px 22px;
+    background: #111820; border: 1px solid #252d3a; border-radius: 14px;
+}
+.summary-box h4 { margin: 0 0 10px; font-size: 0.85rem; }
+.summary-box ul { margin: 0; padding-left: 20px; font-size: 0.78rem; color: #94a3b8; line-height: 1.8; }
+.summary-box ul li strong { color: #e2e8f0; }
+</style>
+</head>
+<body>
+
+<h1>🌸🍵 亮色风格追加 — 设计草图</h1>
+<p class="sub">现有 5 种暗色 + 新增 2 种亮色 = 7 种可选</p>
+
+<!-- ── New styles on dark background (how they appear in radial menu) ── -->
+<div class="section-label">▼ 深色背景下的亮色卡片（实际使用场景）</div>
+<div class="row">
+    <div class="bg-checker dark-bg" style="flex:0 0 auto;">
+        <div class="style-demo" style="background:transparent; border:none; padding:0;">
+            <h3>🌸 Blossom <span class="tag">花漾粉</span></h3>
+            <div class="card blossom">
+                <div class="menu">···</div>
+                <div style="position:absolute; left:14px; top:14px;"><div class="app">Spotify</div></div>
+                <div style="position:absolute; left:14px; top:48px; width:250px;"><div class="track">Pastel*Palettes — しゅわりん☆どり〜みん</div></div>
+                <div class="ctrls">
+                    <div class="btn">◀</div><div class="btn play">▶</div><div class="btn">▶</div>
+                </div>
+            </div>
+            <div class="desc">粉白渐变 + 暖色光晕。像樱花季节的明亮早晨。</div>
+            <div class="tag-light">亮色系</div>
+        </div>
+    </div>
+
+    <div class="bg-checker dark-bg" style="flex:0 0 auto;">
+        <div class="style-demo" style="background:transparent; border:none; padding:0;">
+            <h3>🍵 Matcha <span class="tag">抹茶绿</span></h3>
+            <div class="card matcha">
+                <div class="menu">···</div>
+                <div style="position:absolute; left:14px; top:14px;"><div class="app">Apple Music</div></div>
+                <div style="position:absolute; left:14px; top:48px; width:250px;"><div class="track">Hello, Happy World! — えがおのオーケストラ</div></div>
+                <div class="ctrls">
+                    <div class="btn">◀</div><div class="btn play">▶</div><div class="btn">▶</div>
+                </div>
+            </div>
+            <div class="desc">薄荷绿渐变 + 清新高光。像抹茶拿铁般干净清爽。</div>
+            <div class="tag-light">亮色系</div>
+        </div>
+    </div>
+</div>
+
+<!-- ── Full grid of all 7 ── -->
+<div class="section-label" style="margin-top:28px;">▼ 全部 7 种风格一览（浅色背景验证可读性）</div>
+<div class="grid-7">
+    <!-- Aurora -->
+    <div class="style-demo">
+        <h3>🌌 Aurora <span class="tag">极光</span></h3>
+        <div class="bg-checker dark-bg"><div class="card aurora" style="width:280px; height:130px;">
+            <div class="menu">···</div>
+            <div style="position:absolute; left:12px; top:12px;"><div class="app">Chrome</div></div>
+            <div style="position:absolute; left:12px; top:44px; width:220px;"><div class="track">Roselia — FIRE BIRD</div></div>
+            <div class="ctrls" style="bottom:18px; gap:8px;"><div class="btn">◀</div><div class="btn play">▶</div><div class="btn">▶</div></div>
+        </div></div>
+        <div class="tag-dark">暗色系</div>
+    </div>
+
+    <!-- Neon -->
+    <div class="style-demo">
+        <h3>⚡ Neon <span class="tag">霓虹</span></h3>
+        <div class="bg-checker dark-bg"><div class="card neon" style="width:280px; height:130px;">
+            <div class="menu">···</div>
+            <div style="position:absolute; left:12px; top:12px;"><div class="app">YouTube</div></div>
+            <div style="position:absolute; left:12px; top:44px; width:220px;"><div class="track">RAISE A SUILEN — EXPOSE</div></div>
+            <div class="ctrls" style="bottom:18px; gap:8px;"><div class="btn">◀</div><div class="btn play">▶</div><div class="btn">▶</div></div>
+        </div></div>
+        <div class="tag-dark">暗色系</div>
+    </div>
+
+    <!-- Glass -->
+    <div class="style-demo">
+        <h3>🫧 Glass <span class="tag">磨砂</span></h3>
+        <div class="bg-checker dark-bg"><div class="card glass" style="width:280px; height:130px;">
+            <div class="menu">···</div>
+            <div style="position:absolute; left:12px; top:12px;"><div class="app">Spotify</div></div>
+            <div style="position:absolute; left:12px; top:44px; width:220px;"><div class="track">Poppin'Party — キズナミュージック</div></div>
+            <div class="ctrls" style="bottom:18px; gap:8px;"><div class="btn">◀</div><div class="btn play">▶</div><div class="btn">▶</div></div>
+        </div></div>
+        <div class="tag-dark">暗色系</div>
+    </div>
+
+    <!-- Velvet -->
+    <div class="style-demo">
+        <h3>🌙 Velvet <span class="tag">丝绒</span></h3>
+        <div class="bg-checker dark-bg"><div class="card velvet" style="width:280px; height:130px;">
+            <div class="menu">···</div>
+            <div style="position:absolute; left:12px; top:12px;"><div class="app">NetEase</div></div>
+            <div style="position:absolute; left:12px; top:44px; width:220px;"><div class="track">Afterglow — Y.O.L.O!!!!!</div></div>
+            <div class="ctrls" style="bottom:18px; gap:8px;"><div class="btn">◀</div><div class="btn play">▶</div><div class="btn">▶</div></div>
+        </div></div>
+        <div class="tag-dark">暗色系</div>
+    </div>
+
+    <!-- Prism -->
+    <div class="style-demo">
+        <h3>💎 Prism <span class="tag">幻彩</span></h3>
+        <div class="bg-checker dark-bg"><div class="card prism" style="width:280px; height:130px;">
+            <div class="menu">···</div>
+            <div style="position:absolute; left:12px; top:12px;"><div class="app">QQ Music</div></div>
+            <div style="position:absolute; left:12px; top:44px; width:220px;"><div class="track">Morfonica — Daylight</div></div>
+            <div class="ctrls" style="bottom:18px; gap:8px;"><div class="btn">◀</div><div class="btn play">▶</div><div class="btn">▶</div></div>
+        </div></div>
+        <div class="tag-dark">暗色系</div>
+    </div>
+
+    <!-- Blossom -->
+    <div class="style-demo">
+        <h3>🌸 Blossom <span class="tag">花漾粉</span></h3>
+        <div class="bg-checker light-bg"><div class="card blossom" style="width:280px; height:130px;">
+            <div class="menu">···</div>
+            <div style="position:absolute; left:12px; top:12px;"><div class="app">Spotify</div></div>
+            <div style="position:absolute; left:12px; top:44px; width:220px;"><div class="track">Pastel*Palettes — しゅわりん☆どり〜みん</div></div>
+            <div class="ctrls" style="bottom:18px; gap:8px;"><div class="btn">◀</div><div class="btn play">▶</div><div class="btn">▶</div></div>
+        </div></div>
+        <div class="tag-light">亮色系</div>
+    </div>
+
+    <!-- Matcha -->
+    <div class="style-demo">
+        <h3>🍵 Matcha <span class="tag">抹茶绿</span></h3>
+        <div class="bg-checker light-bg"><div class="card matcha" style="width:280px; height:130px;">
+            <div class="menu">···</div>
+            <div style="position:absolute; left:12px; top:12px;"><div class="app">Apple Music</div></div>
+            <div style="position:absolute; left:12px; top:44px; width:220px;"><div class="track">HHW — えがおのオーケストラ</div></div>
+            <div class="ctrls" style="bottom:18px; gap:8px;"><div class="btn">◀</div><div class="btn play">▶</div><div class="btn">▶</div></div>
+        </div></div>
+        <div class="tag-light">亮色系</div>
+    </div>
+</div>
+
+<div class="summary-box">
+    <h4>📋 风格清单</h4>
+    <ul>
+        <li><strong>🌌 Aurora</strong> — 暗紫极光，默认风格</li>
+        <li><strong>⚡ Neon</strong> — 霓虹扫描线</li>
+        <li><strong>🫧 Glass</strong> — 磨砂半透明</li>
+        <li><strong>🌙 Velvet</strong> — 丝绒暗金</li>
+        <li><strong>💎 Prism</strong> — 全息幻彩</li>
+        <li><strong>🌸 Blossom</strong> — 粉白樱花 · <span style="color:#f58ab0;">亮色系 NEW</span></li>
+        <li><strong>🍵 Matcha</strong> — 抹茶薄荷 · <span style="color:#5cc492;">亮色系 NEW</span></li>
+    </ul>
+</div>
+
+<p style="text-align:center; margin-top:18px; font-size:0.76rem; color:#4b5563;">
+    亮色卡片在深色径向菜单中会很显眼，选好了告诉我，我加到代码里。
+</p>
+</body>
+</html>
