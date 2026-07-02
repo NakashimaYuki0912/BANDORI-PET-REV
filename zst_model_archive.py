@@ -138,8 +138,19 @@ def _join_member(base_dir: str, path: str) -> str:
 
 
 def list_archive_files(archive_path: Path | str) -> list[str]:
+    archive_path = Path(archive_path).resolve()
+    cache_path = archive_path.with_suffix(".zst.cache.json")
+    mtime = archive_path.stat().st_mtime if archive_path.exists() else 0
+    if cache_path.exists():
+        try:
+            cache = json.loads(cache_path.read_text(encoding="utf-8"))
+            if cache.get("mtime") == mtime and isinstance(cache.get("files"), list):
+                return cache["files"]
+        except (json.JSONDecodeError, KeyError, OSError):
+            pass
+
     files = []
-    with _open_tar_zst(str(Path(archive_path).resolve())) as archive:
+    with _open_tar_zst(str(archive_path)) as archive:
         members = iter(archive)
         first = next(members, None)
         if first is not None:
@@ -156,7 +167,12 @@ def list_archive_files(archive_path: Path | str) -> list[str]:
         for member in members:
             if member.isfile():
                 files.append(_normalize_member(member.name))
-    return sorted(files)
+    result = sorted(files)
+    try:
+        cache_path.write_text(json.dumps({"mtime": mtime, "files": result}, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+    return result
 
 
 @contextmanager

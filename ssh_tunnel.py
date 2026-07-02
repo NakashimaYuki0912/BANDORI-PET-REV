@@ -75,12 +75,7 @@ def _start_key_auth() -> bool:
             stderr=subprocess.DEVNULL,
             creationflags=flags,
         )
-        # Wait up to 6 s for the local port to open
-        for _ in range(30):
-            time.sleep(0.2)
-            if _port_open(_LOCAL_PORT):
-                return True
-        return _proc.poll() is None
+        return True  # non-blocking: process started, port may take a moment
     except Exception as e:
         print(f"[ssh_tunnel] key-auth start error: {e}")
         return False
@@ -145,13 +140,13 @@ def _start_password_auth() -> bool:
 
 def start() -> bool:
     """
-    Start the SSH tunnel.  Returns True if tunnel is up (or port already open).
-    Prefers SSH-key auth if ~/.ssh/bandori_key exists, otherwise uses password.
+    Start the SSH tunnel in background. Returns True immediately if port already
+    open or process launched; False on password-auth failure.
     """
     global _watchdog_thread
 
     if _port_open(_LOCAL_PORT):
-        return True  # Something is already listening on 9880
+        return True
 
     with _lock:
         if _use_key_auth():

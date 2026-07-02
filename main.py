@@ -615,7 +615,19 @@ def main():
         init_chat_integration_server()
 
     def launch_pet():
-        cfg.load()
+        # Skip redundant load-save cycle on cold start
+        _settings_keys = {"language", "dark", "fps", "opacity", "vsync", "game_topmost",
+                          "hide_live2d_model", "live2d_idle_actions_enabled",
+                          "live2d_quality", "live2d_scale", "compact_ai_window_enabled",
+                          "compact_ai_window_opacity", "compact_ai_window_font_size",
+                          "compact_ai_window_background_color", "compact_ai_window_text_color",
+                          "ai_event_overlay_enabled", "ai_status_port_enabled",
+                          "ai_status_port", "ai_status_token", "chat_integration_enabled",
+                          "chat_integration_overlay_enabled", "chat_integration_include_context",
+                          "chat_integration_port", "chat_integration_token"}
+        _has_pending = any(k in pet_window_ref for k in _settings_keys)
+        if _has_pending:
+            cfg.load()
         if "language" in pet_window_ref:
             set_language(pet_window_ref["language"])
             cfg.set("language", pet_window_ref["language"])
@@ -666,7 +678,8 @@ def main():
             cfg.set("chat_integration_port", pet_window_ref["chat_integration_port"])
         if "chat_integration_token" in pet_window_ref:
             cfg.set("chat_integration_token", pet_window_ref["chat_integration_token"])
-        cfg.save()
+        if _has_pending:
+            cfg.save()
         models = configured_models()
         selected_char = pet_window_ref.get("char")
         selected_costume = pet_window_ref.get("costume")
