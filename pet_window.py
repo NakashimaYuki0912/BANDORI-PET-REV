@@ -2161,22 +2161,30 @@ class PetWindow(QWidget):
         self._radial_media_item.command_requested.connect(self._send_media_command)
         self._radial_media_item.style_selected.connect(self._on_radial_media_style_selected)
 
-        radial_menu.add_item(
-            "", _tr("PetWindow.radial_chat"), QColor(170, 150, 210),
-            glyph="◈",
+        radial_menu.add_row_item(
+            _tr("PetWindow.radial_chat"), QColor(170, 150, 210),
+            icon_kind="chat",
+            subtitle=_tr("PetWindow.radial_chat_hint", "打开角色对话"),
             on_click=self._on_radial_chat,
         )
-        radial_menu.add_item(
-            "", _tr("PetWindow.radial_costume"), QColor(210, 150, 170),
-            glyph="✦",
+        radial_menu.add_row_item(
+            _tr("PetWindow.radial_costume"), QColor(210, 150, 170),
+            icon_kind="costume",
+            subtitle=_tr("PetWindow.radial_costume_hint", "更改角色服装"),
             on_click=self._on_radial_costume,
         )
-        radial_menu.add_item(
-            "", _tr("PetWindow.radial_weather", "天气"), QColor(130, 190, 170),
-            glyph="◉",
+        radial_menu.add_row_item(
+            _tr("PetWindow.radial_weather", "天气"), QColor(130, 190, 170),
+            icon_kind="weather",
+            subtitle=_tr("PetWindow.radial_weather_hint", "查看今日天气"),
             on_click=self._on_radial_weather,
         )
-        radial_menu.add_spacer()
+        self._lock_row = radial_menu.add_row_item(
+            _tr("PetWindow.radial_lock", "锁定位置"), QColor(160, 160, 180),
+            icon_kind="lock",
+            subtitle=_tr("PetWindow.radial_lock_hint", "固定桌宠位置"),
+            on_click=self._on_radial_lock_toggle,
+        )
         self._radial_menu = radial_menu
         return radial_menu
 
@@ -2193,6 +2201,13 @@ class PetWindow(QWidget):
             return
         self._radial_menu.set_animation_fps(self._fps)
         self._radial_menu.set_locked(self._live2d_widget._drag_locked)
+        if hasattr(self, "_lock_row") and self._lock_row is not None:
+            if self._live2d_widget._drag_locked:
+                self._lock_row.set_label(_tr("PetWindow.radial_unlock", "解锁位置"))
+                self._lock_row.set_subtitle(_tr("PetWindow.radial_unlock_hint", "允许拖拽移动"))
+            else:
+                self._lock_row.set_label(_tr("PetWindow.radial_lock", "锁定位置"))
+                self._lock_row.set_subtitle(_tr("PetWindow.radial_lock_hint", "固定桌宠位置"))
 
     def _prewarm_radial_menu(self):
         if self._radial_menu_prewarmed or not self.isVisible():
@@ -3046,6 +3061,15 @@ class PetWindow(QWidget):
             if name.lower().endswith('_default') or name.lower() == 'default':
                 return name
         return None
+
+    def _on_radial_lock_toggle(self):
+        locked = not self._live2d_widget._drag_locked
+        self._live2d_widget.set_drag_locked(locked)
+        self._pixel_widget.set_drag_locked(locked)
+        if self._cfg:
+            self._cfg.load()
+            self._cfg.set("drag_locked", bool(locked))
+            self._cfg.save()
 
     def _on_lock_toggled(self, locked: bool):
         self._live2d_widget.set_drag_locked(locked)

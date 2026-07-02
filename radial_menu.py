@@ -1326,6 +1326,153 @@ class _ItemData:
     is_media: bool = False
 
 
+class RadialListRow(QWidget):
+    """Card-style row with left color strip, line icon, title + subtitle."""
+    clicked = Signal()
+
+    @staticmethod
+    def _draw_chat_icon(p, x, y, w, h, color):
+        # Speech bubble: rounded rect + triangular tail
+        body = QRectF(x + 1, y + 1, w - 2, h - 6)
+        p.drawRoundedRect(body, 3, 3)
+        tail = QPainterPath()
+        bx, by = body.right() - w * 0.3, body.bottom()
+        tail.moveTo(bx, by)
+        tail.lineTo(bx + 5, by + 5)
+        tail.lineTo(bx + 8, by)
+        tail.closeSubpath()
+        p.drawPath(tail)
+
+    @staticmethod
+    def _draw_costume_icon(p, x, y, w, h, color):
+        # Hanger shape: horizontal bar + triangle body
+        p.drawLine(int(x + w / 2), y + 1, int(x + w / 2), y + 5)
+        p.drawLine(x + 2, y + 5, x + w - 2, y + 5)
+        p.drawLine(x + 3, y + 5, x + 1, y + h - 1)
+        p.drawLine(x + w - 3, y + 5, x + w - 1, y + h - 1)
+        p.drawLine(x + 1, y + h - 1, x + w - 1, y + h - 1)
+
+    @staticmethod
+    def _draw_weather_icon(p, x, y, w, h, color):
+        # Sun: center circle + 4 rays
+        cx, cy = x + w / 2, y + h / 2
+        p.drawEllipse(int(cx - 3), int(cy - 3), 6, 6)
+        p.drawLine(int(cx), y, int(cx), y + 2)
+        p.drawLine(int(cx), y + h - 2, int(cx), y + h)
+        p.drawLine(x, int(cy), x + 2, int(cy))
+        p.drawLine(x + w - 2, int(cy), x + w, int(cy))
+
+    @staticmethod
+    def _draw_lock_icon(p, x, y, w, h, color):
+        # Padlock: rounded body + shackle arc + keyhole
+        p.drawRoundedRect(QRectF(x + 2, y + 6, w - 4, h - 7), 2, 2)
+        p.drawArc(QRectF(x + 4, y + 1, w - 8, h - 7), 0, 180 * 16)
+        kx, ky = int(x + w / 2 - 1), int(y + h / 2 + 4)
+        p.drawEllipse(kx, ky, 2, 2)
+
+    _ICON_DRAWERS = ("chat", "costume", "weather", "lock")
+
+    def __init__(self, label: str, color: QColor, icon_kind: str = "", subtitle: str = "",
+                 enabled: bool = True, parent=None):
+        super().__init__(parent)
+        self._label = label
+        self._color = color
+        self._icon_kind = icon_kind
+        self._subtitle = subtitle
+        self._enabled = enabled
+        self._hover = False
+        self.setFixedHeight(46)
+        self.setMinimumWidth(130)
+        self.setCursor(Qt.CursorShape.PointingHandCursor if enabled else Qt.CursorShape.ForbiddenCursor)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+
+    def set_label(self, label: str):
+        self._label = label
+        self.update()
+
+    def set_subtitle(self, subtitle: str):
+        self._subtitle = subtitle
+        self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        try:
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            w, h = self.width(), self.height()
+
+            alpha = 18 if not self._hover else 30
+            bg = QColor(self._color)
+            bg.setAlpha(alpha)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(bg))
+            p.drawRoundedRect(QRectF(6, 2, w - 12, h - 4), 8, 8)
+
+            # Left color strip
+            strip = QColor(self._color)
+            strip.setAlpha(140)
+            p.setBrush(QBrush(strip))
+            p.drawRoundedRect(QRectF(6, 6, 3, h - 12), 1.5, 1.5)
+
+            # Icon area
+            icon_x, icon_y = 18, (h - 28) // 2
+            icon_rect = QRectF(icon_x, icon_y, 28, 28)
+            icon_bg = QColor(self._color)
+            icon_bg.setAlpha(35 if not self._hover else 55)
+            p.setBrush(QBrush(icon_bg))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.drawRoundedRect(icon_rect, 7, 7)
+
+            # Line icon
+            if self._icon_kind in self._ICON_DRAWERS:
+                ico = QColor(255, 255, 255, 200 if not self._hover else 240)
+                pen = QPen(ico, 1.4)
+                pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+                p.setPen(pen)
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                method = getattr(self, "_draw_" + self._icon_kind + "_icon", None)
+                if method:
+                    try:
+                        method(p, icon_x + 3, icon_y + 3, 22, 22, ico)
+                    except Exception:
+                        pass
+
+            # Title
+            text_x = icon_x + 36
+            font = p.font()
+            font.setPointSize(10)
+            font.setBold(True)
+            p.setFont(font)
+            title_color = QColor(255, 255, 255, 215 if not self._hover else 245)
+            p.setPen(title_color)
+            p.drawText(QRectF(text_x, 5, w - text_x - 12, 20),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom, self._label)
+
+            # Subtitle
+            if self._subtitle:
+                font.setPointSize(8)
+                font.setBold(False)
+                p.setFont(font)
+                sub_color = QColor(180, 180, 195, 160 if not self._hover else 200)
+                p.setPen(sub_color)
+                p.drawText(QRectF(text_x, 24, w - text_x - 12, 16),
+                           Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, self._subtitle)
+        except Exception:
+            pass
+
+    def enterEvent(self, event):
+        self._hover = True
+        self.update()
+
+    def leaveEvent(self, event):
+        self._hover = False
+        self.update()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self._enabled:
+            self.clicked.emit()
+
+
 class RadialMenu(QWidget):
     closed = Signal()
     lock_toggled = Signal(bool)
@@ -1441,7 +1588,21 @@ class RadialMenu(QWidget):
                 return item.widget.size()
         return QSize(0, 0)
 
+    def _is_row_layout(self) -> bool:
+        return any(isinstance(it.widget, RadialListRow) for it in self._items)
+
     def _menu_popup_size(self, has_media: bool) -> QSize:
+        if self._is_row_layout():
+            n_rows = sum(1 for it in self._items if isinstance(it.widget, RadialListRow))
+            list_h = n_rows * 54 + 8
+            list_w = 190
+            if has_media:
+                gap = 130  # pet sits between list and card
+                ms = self._media_item_size()
+                w = list_w + gap + ms.width() + 24
+                h = max(list_h, ms.height()) + 24
+                return QSize(w, h)
+            return QSize(list_w + 24, list_h + 16)
         base_w = self._radius * 2 + 80 * 2
         base_h = self._radius * 2 + 80 * 2
         if not has_media:
@@ -1573,6 +1734,25 @@ class RadialMenu(QWidget):
             opacity_effect=opacity,
         ))
 
+    def add_row_item(self, label: str, color: QColor,
+                     on_click: Callable, icon_kind: str = "", subtitle: str = "",
+                     enabled: bool = True) -> RadialListRow:
+        w = RadialListRow(label, color, icon_kind=icon_kind, subtitle=subtitle,
+                          enabled=enabled, parent=self)
+        w.clicked.connect(on_click)
+        w.clicked.connect(self._on_item_clicked)
+        w.hide()
+        opacity = QGraphicsOpacityEffect(w)
+        opacity.setOpacity(0.0)
+        w.setGraphicsEffect(opacity)
+        self._items.append(_ItemData(
+            widget=w,
+            start_offset=QPoint(0, 0),
+            end_offset=QPoint(0, 0),
+            opacity_effect=opacity,
+        ))
+        return w
+
     def add_spacer(self):
         w = QWidget(self)
         w.setFixedSize(80, 80)
@@ -1636,7 +1816,12 @@ class RadialMenu(QWidget):
         self._ignore_outside_click_until_release = self._mouse_buttons_pressed()
         self._set_center_reveal_value(0.0)
 
-        popup_size = self._menu_popup_size(has_media)
+        if self._is_row_layout():
+            popup_size = self._menu_popup_size(has_media)
+            # List left of pet, card right of pet — pet sits in the wide gap
+            center = QPoint(center.x() + popup_size.width() // 2 - 282, center.y())
+        else:
+            popup_size = self._menu_popup_size(has_media)
         total_w = popup_size.width()
         total_h = popup_size.height()
         top_left = self._clamped_top_left(center, popup_size)
@@ -1647,13 +1832,19 @@ class RadialMenu(QWidget):
         cx = self._anchor_local.x()
         cy = self._anchor_local.y()
 
-        if has_media:
-            self._layout_with_media(cx, cy)
-        else:
-            self._layout_circle(cx, cy, range(n))
+        try:
+            if self._is_row_layout():
+                self._layout_vertical_list(cx, cy, has_media)
+            elif has_media:
+                self._layout_with_media(cx, cy)
+            else:
+                self._layout_circle(cx, cy, range(n))
 
-        for item in self._items:
-            item.widget.show()
+            for item in self._items:
+                item.widget.show()
+        except Exception:
+            self._is_showing = False
+            return
 
         self.show()
         if sys.platform.startswith("linux"):
@@ -1737,6 +1928,37 @@ class RadialMenu(QWidget):
             item.end_offset = QPoint(target_x - start_x, target_y - start_y)
             item.start_offset = QPoint(0, 0)
             item.widget.move(start_x, start_y)
+
+    def _layout_vertical_list(self, cx: int, cy: int, has_media: bool):
+        """Left-right with wide gap: list on left, card on far right."""
+        pad = 12
+        row_h = 54
+        list_w = 190
+        row_indices = []
+        media_idx = None
+        for i, item in enumerate(self._items):
+            if item.is_media:
+                media_idx = i
+            elif isinstance(item.widget, RadialListRow):
+                row_indices.append(i)
+
+        # List rows on the left, vertically centered
+        list_top = (self.height() - len(row_indices) * row_h) // 2
+        for j, i in enumerate(row_indices):
+            item = self._items[i]
+            item.widget.setFixedWidth(list_w)
+            item.widget.move(pad, list_top + j * row_h)
+            item.end_offset = QPoint(0, 0)
+            item.start_offset = QPoint(0, 0)
+
+        # Media card on the FAR right
+        if media_idx is not None:
+            media = self._items[media_idx]
+            mw = media.widget.width()
+            mh = media.widget.height()
+            media.widget.move(self.width() - mw - pad, (self.height() - mh) // 2)
+            media.end_offset = QPoint(0, 0)
+            media.start_offset = QPoint(0, 0)
 
     @staticmethod
     def _mouse_buttons_pressed() -> bool:
@@ -1851,10 +2073,11 @@ class RadialMenu(QWidget):
         dx = event.pos().x() - cx
         dy = event.pos().y() - cy
         dist = (dx * dx + dy * dy) ** 0.5
-        was_hover = self._center_hover
-        self._center_hover = dist < 40
-        if was_hover != self._center_hover:
-            self.update()
+        if not self._is_row_layout():
+            was_hover = self._center_hover
+            self._center_hover = dist < 40
+            if was_hover != self._center_hover:
+                self.update()
         super().mouseMoveEvent(event)
 
     def mousePressEvent(self, event: QMouseEvent):
@@ -1874,11 +2097,16 @@ class RadialMenu(QWidget):
         dist = (dx * dx + dy * dy) ** 0.5
 
         if dist < 40:
-            self._toggle_locked()
+            if self._is_row_layout():
+                pass
+            else:
+                self._toggle_locked()
         else:
             self.dismiss()
 
     def paintEvent(self, event):
+        if self._is_row_layout():
+            return
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 

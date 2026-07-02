@@ -1179,6 +1179,8 @@ class SettingsWindow(QWidget):
         self._theme_widgets: list[QWidget] = []
         self._pages: dict[str, QWidget] = {}
         self._nav_buttons: dict[str, NavButton] = {}
+        self._tab_buttons: dict[str, QPushButton] = {}
+        self._tab_groups: dict[str, list[QWidget]] = {}
         self._char_page = None
         self._costume_page = None
         self._llm_page = None
@@ -1560,10 +1562,36 @@ class SettingsWindow(QWidget):
         if not hasattr(self, '_sidebar'):
             return
         dark = isDarkTheme()
+        tab_active_bg = 'rgba(87,113,230,0.18)' if dark else 'rgba(87,113,230,0.10)'
+        tab_active_fg = '#a0b8ff' if dark else '#4a5ec7'
+        tab_inactive_fg = '#6b7280' if dark else '#9ca3af'
+        tab_hover_bg = 'rgba(255,255,255,0.04)' if dark else 'rgba(0,0,0,0.03)'
         self._sidebar.setStyleSheet(f"""
             #sidebar {{
                 background: {'#181818' if dark else '#f5f6f8'};
                 border-right: 1px solid {'#404040' if dark else '#d5d5d5'};
+            }}
+            #SidebarTabBar {{
+                background: transparent;
+                border-bottom: 1px solid {'#2a2a2a' if dark else '#e5e5e5'};
+                margin: 0 4px;
+            }}
+            QPushButton#SidebarTab {{
+                background: transparent;
+                color: {tab_inactive_fg};
+                border: none;
+                border-radius: 6px;
+                padding: 4px 10px;
+                font-size: 11px;
+                font-weight: 500;
+            }}
+            QPushButton#SidebarTab:hover {{
+                background: {tab_hover_bg};
+            }}
+            QPushButton#SidebarTab:checked {{
+                background: {tab_active_bg};
+                color: {tab_active_fg};
+                font-weight: 600;
             }}
         """)
 
@@ -1591,35 +1619,68 @@ class SettingsWindow(QWidget):
         brand_row.addWidget(title, 1)
         layout.addLayout(brand_row)
 
+        # --- Tab bar ---
+        tab_bar = QWidget(sidebar)
+        tab_bar.setFixedHeight(36)
+        tab_bar.setObjectName("SidebarTabBar")
+        tab_layout = QHBoxLayout(tab_bar)
+        tab_layout.setContentsMargins(6, 2, 6, 2)
+        tab_layout.setSpacing(3)
+        self._tab_buttons: dict[str, QPushButton] = {}
+        self._tab_groups: dict[str, list[QWidget]] = {}
+        for tab_key, tab_label in [
+            ("character", _tr("SettingsWindow.nav_tab_character", "角色")),
+            ("chat", _tr("SettingsWindow.nav_tab_chat", "对话")),
+            ("advanced", _tr("SettingsWindow.nav_tab_advanced", "高级")),
+        ]:
+            btn = QPushButton(tab_label, tab_bar)
+            btn.setObjectName("SidebarTab")
+            btn.setFlat(True)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setCheckable(True)
+            btn.clicked.connect(lambda checked, k=tab_key: self._switch_tab(k))
+            tab_layout.addWidget(btn)
+            self._tab_buttons[tab_key] = btn
+            self._tab_groups[tab_key] = []
+        layout.addWidget(tab_bar)
+
+        # --- Tab: 角色 ---
         btn_chars = NavButton("characters", FluentIcon.PEOPLE, _tr("SettingsWindow.nav_chars"), sidebar, "#e4004f")
         btn_chars.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["characters"] = btn_chars
         layout.addWidget(btn_chars)
-
-        btn_llm = NavButton("llm", FluentIcon.ROBOT, _tr("SettingsWindow.nav_llm"), sidebar, "#8b5cf6")
-        btn_llm.nav_activated.connect(self._on_nav_selected)
-        self._nav_buttons["llm"] = btn_llm
-        layout.addWidget(btn_llm)
-
-        btn_tts = NavButton("tts", FluentIcon.MICROPHONE, _tr("SettingsWindow.nav_tts", "TTS 配置"), sidebar, "#f59e0b")
-        btn_tts.nav_activated.connect(self._on_nav_selected)
-        self._nav_buttons["tts"] = btn_tts
-        layout.addWidget(btn_tts)
+        self._tab_groups["character"].append(btn_chars)
 
         btn_weather = NavButton("weather", FluentIcon.CLOUD, _tr("SettingsWindow.nav_weather", "天气"), sidebar, "#0ea5e9")
         btn_weather.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["weather"] = btn_weather
         layout.addWidget(btn_weather)
+        self._tab_groups["character"].append(btn_weather)
 
         btn_pov = NavButton("pov", "avatar", _tr("SettingsWindow.nav_pov"), sidebar, "#ec4899")
         btn_pov.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["pov"] = btn_pov
         layout.addWidget(btn_pov)
+        self._tab_groups["character"].append(btn_pov)
 
         btn_memory = NavButton("memory", FluentIcon.LIBRARY, _tr("SettingsWindow.nav_memory"), sidebar, "#10b981")
         btn_memory.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["memory"] = btn_memory
         layout.addWidget(btn_memory)
+        self._tab_groups["character"].append(btn_memory)
+
+        # --- Tab: 对话 ---
+        btn_llm = NavButton("llm", FluentIcon.ROBOT, _tr("SettingsWindow.nav_llm"), sidebar, "#8b5cf6")
+        btn_llm.nav_activated.connect(self._on_nav_selected)
+        self._nav_buttons["llm"] = btn_llm
+        layout.addWidget(btn_llm)
+        self._tab_groups["chat"].append(btn_llm)
+
+        btn_tts = NavButton("tts", FluentIcon.MICROPHONE, _tr("SettingsWindow.nav_tts", "TTS 配置"), sidebar, "#f59e0b")
+        btn_tts.nav_activated.connect(self._on_nav_selected)
+        self._nav_buttons["tts"] = btn_tts
+        layout.addWidget(btn_tts)
+        self._tab_groups["chat"].append(btn_tts)
 
         btn_relationship_guide = NavButton(
             "relationship_guide",
@@ -1631,11 +1692,7 @@ class SettingsWindow(QWidget):
         btn_relationship_guide.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["relationship_guide"] = btn_relationship_guide
         layout.addWidget(btn_relationship_guide)
-
-        btn_compact = NavButton("compact_window", FluentIcon.CHAT, _tr("SettingsWindow.nav_compact_window"), sidebar, "#3b82f6")
-        btn_compact.nav_activated.connect(self._on_nav_selected)
-        self._nav_buttons["compact_window"] = btn_compact
-        layout.addWidget(btn_compact)
+        self._tab_groups["chat"].append(btn_relationship_guide)
 
         btn_chat_integration = NavButton(
             "chat_integration",
@@ -1647,6 +1704,14 @@ class SettingsWindow(QWidget):
         btn_chat_integration.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["chat_integration"] = btn_chat_integration
         layout.addWidget(btn_chat_integration)
+        self._tab_groups["chat"].append(btn_chat_integration)
+
+        # --- Tab: 高级 ---
+        btn_compact = NavButton("compact_window", FluentIcon.CHAT, _tr("SettingsWindow.nav_compact_window"), sidebar, "#3b82f6")
+        btn_compact.nav_activated.connect(self._on_nav_selected)
+        self._nav_buttons["compact_window"] = btn_compact
+        layout.addWidget(btn_compact)
+        self._tab_groups["advanced"].append(btn_compact)
 
         btn_mcp_computer = NavButton(
             "mcp_computer",
@@ -1658,11 +1723,13 @@ class SettingsWindow(QWidget):
         btn_mcp_computer.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["mcp_computer"] = btn_mcp_computer
         layout.addWidget(btn_mcp_computer)
+        self._tab_groups["advanced"].append(btn_mcp_computer)
 
         btn_quality = NavButton("quality", FluentIcon.PALETTE, _tr("SettingsWindow.nav_quality"), sidebar, "#22c55e")
         btn_quality.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["quality"] = btn_quality
         layout.addWidget(btn_quality)
+        self._tab_groups["advanced"].append(btn_quality)
 
         layout.addStretch()
 
@@ -1670,6 +1737,9 @@ class SettingsWindow(QWidget):
         btn_about.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["about"] = btn_about
         layout.addWidget(btn_about)
+
+        # Activate default tab
+        self._switch_tab("character")
 
         self._update_sidebar_style()
         self._theme_widgets.append(sidebar)
@@ -1684,6 +1754,13 @@ class SettingsWindow(QWidget):
         self._nav_indicator.hide()
 
         return sidebar
+
+    def _switch_tab(self, tab_key: str):
+        for key, btn in self._tab_buttons.items():
+            btn.setChecked(key == tab_key)
+        for key, widgets in self._tab_groups.items():
+            for w in widgets:
+                w.setVisible(key == tab_key)
 
     def _on_nav_selected(self, nav_key: str):
         page = self._ensure_page(nav_key)
