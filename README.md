@@ -21,12 +21,24 @@
 
 ## 🎨 交互改进
 
+### 右键菜单重设计
+
+圆圈弧形 → 卡片式竖排列表，手绘线描 SVG 图标（气泡/衣架/太阳/挂锁），带标题和副标题。
+
+![右键菜单](https://github.com/user-attachments/assets/210dacd2-31cf-4c0a-806d-50a44e55ca49)
+
+### 设置面板导航重排
+
+侧栏按钮用 Tab 分组（角色 / 对话 / 高级），不再拥挤。
+
+![设置面板](https://github.com/user-attachments/assets/f8adacf5-d4b5-44ca-a113-edd9f52a453a)
+
+### 其他改进
+
 | 改进项 | 说明 |
 |--------|------|
-| **右键菜单重设计** | 圆圈弧形 → 卡片式竖排列表，手绘线描 SVG 图标（气泡/衣架/太阳/挂锁），带标题和副标题 |
-<img width="654" height="248" alt="image" src="https://github.com/user-attachments/assets/210dacd2-31cf-4c0a-806d-50a44e55ca49" />
 | **锁定功能入口** | 桌宠位置锁定/解锁从中心隐藏按钮移到右键菜单独立入口 |
-| **设置面板导航重排** | 侧栏按钮用 Tab 分组（角色 / 对话 / 高级），不再拥挤 |
-<img width="1182" height="712" alt="image" src="https://github.com/user-attachments/assets/f8adacf5-d4b5-44ca-a113-edd9f52a453a" />
+| **同角色无缝换装** | 相同角色切换服装不再关闭窗口重启进程，Live2D 模型原地热替换 |
+| **换装面板直达** | 右键→换装直接打开服装选择页，不再闪现角色列表页 |
+| **TTS 功能优化** | 替换为 GPT-SoVITS 方式，音源来自 [Bestdori](https://bestdori.com/) |
 | **Agent Skills 集成** | 配置 mattpocock/skills 工程技能（triage、to-issues、grill-with-docs 等） |
-| **TTS功能优化** |将原本的Qwen训练TTS方式替换为了GPT-SoVITS方式，源文件来自于https://bestdori.com/
