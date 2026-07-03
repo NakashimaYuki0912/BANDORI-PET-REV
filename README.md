@@ -29,3 +29,4 @@
 | **设置面板导航重排** | 侧栏按钮用 Tab 分组（角色 / 对话 / 高级），不再拥挤 |
 <img width="1182" height="712" alt="image" src="https://github.com/user-attachments/assets/f8adacf5-d4b5-44ca-a113-edd9f52a453a" />
 | **Agent Skills 集成** | 配置 mattpocock/skills 工程技能（triage、to-issues、grill-with-docs 等） |
+|**TTS功能优化**|将原本的Qwen训练TTS方式替换为了GPT-SoVITS方式，源文件来自于https://bestdori.com/
