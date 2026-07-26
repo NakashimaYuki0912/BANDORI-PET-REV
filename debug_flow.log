@@ -1,0 +1,16 @@
+10:40:45.123535 [main] _launch_settings_from_pet: start_on_costumes=True, existing=False
+10:40:45.123535 [main] starting new process hidden, start_on_costumes=True
+10:40:45.436768 [main] _send_cmd_to_settings: b'SHOW_COSTUMES\n'
+10:40:47.623776 [settings] started: hidden=True, start_on_costumes=1, show_launch=0
+10:40:47.623776 [settings] window hidden
+10:40:47.646566 [settings] _handle_command: 'SHOW_COSTUMES', window_visible=False
+10:48:17.869556 [main] _launch_settings_from_pet: start_on_costumes=True, existing=False
+10:48:17.869556 [main] starting new process hidden, start_on_costumes=True
+10:48:18.190222 [main] _send_cmd_to_settings: b'SHOW_COSTUMES\n'
+10:48:20.842381 [settings] started: hidden=True, start_on_costumes=1, show_launch=0
+10:48:20.842381 [settings] window hidden
+10:48:20.867491 [settings] _handle_command: 'SHOW_COSTUMES', window_visible=False
+10:48:20.867491 [settings] SHOW_COSTUMES: char='kaoru', _current_char='kaoru', _selected_list_character='kaoru'
+10:48:20.868099 [settings] calling _switch_costume_direct
+10:48:20.959623 [settings] _switch_costume_direct done, _current_page='costumes'
+10:48:21.738957 [settings] window shown, _current_page='costumes'

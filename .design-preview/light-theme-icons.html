@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>浅色背景图标优化方案</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',system-ui,sans-serif;padding:24px;color:#222}
+h1{font-size:20px;margin-bottom:4px}
+.sub{color:#666;margin-bottom:24px;font-size:13px}
+.options{display:flex;gap:16px;flex-wrap:wrap}
+.card{background:#fff;border:1px solid #ddd;border-radius:10px;padding:18px;width:290px;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+.card.dark{background:#1a1d2e;color:#dce4f7;border-color:#2a3045}
+.card h3{font-size:13px;margin-bottom:8px}
+.card .note{font-size:11px;color:#999;margin-bottom:10px}
+.card.dark .note{color:#8895b4}
+
+.preview{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
+.row{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:10px;cursor:pointer}
+.row:hover{background:rgba(0,0,0,.03)}
+.dark .row:hover{background:rgba(255,255,255,.04)}
+
+.ico{width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.label{font-weight:600;font-size:13px}
+.sub-label{font-size:10px;color:#999}
+.dark .sub-label{color:#8895b4}
+
+.stripe{width:3px;border-radius:2px;margin-right:4px;flex-shrink:0;height:34px}
+
+.tag{display:inline-block;padding:1px 7px;border-radius:4px;font-size:11px;margin-left:6px}
+.tag.rec{background:#e8f0ff;color:#3b5ccc}
+
+/* Light bg variants */
+.light{background:#f5f6f8}
+</style>
+</head>
+<body class="light">
+
+<h1>浅色背景下图标优化方案</h1>
+<p class="sub">当前半透明色在白色背景上显得很淡</p>
+
+<!-- 方案1 -->
+<div class="options">
+<div class="card">
+<h3>当前 · 半透明 <span class="tag" style="background:#fff0e0;color:#c80">问题</span></h3>
+<p class="note">白色背景下几乎看不清</p>
+<div class="preview">
+<div class="row" style="border-left:3px solid rgba(170,150,210,.45);background:rgba(170,150,210,.06)">
+  <div class="ico" style="background:rgba(170,150,210,.18)"><span style="color:rgba(200,180,240,.55)">話</span></div>
+  <div><div class="label">聊天</div><div class="sub-label">打开角色对话</div></div>
+</div>
+<div class="row" style="border-left:3px solid rgba(210,150,170,.45);background:rgba(210,150,170,.06)">
+  <div class="ico" style="background:rgba(210,150,170,.18)"><span style="color:rgba(230,180,200,.55)">着</span></div>
+  <div><div class="label">换装</div><div class="sub-label">更改角色服装</div></div>
+</div>
+</div>
+</div>
+
+<!-- 方案A -->
+<div class="card">
+<h3>A · 加饱和度 <span class="tag rec">推荐</span></h3>
+<p class="note">图标色和底色都提高不透明度，保持风格不变</p>
+<div class="preview">
+<div class="row" style="border-left:3px solid rgba(140,110,195,.70);background:rgba(140,110,195,.10)">
+  <div class="ico" style="background:rgba(140,110,195,.30)"><span style="color:rgba(90,60,150,.95);font-weight:600">話</span></div>
+  <div><div class="label">聊天</div><div class="sub-label">打开角色对话</div></div>
+</div>
+<div class="row" style="border-left:3px solid rgba(195,120,155,.70);background:rgba(195,120,155,.10)">
+  <div class="ico" style="background:rgba(195,120,155,.30)"><span style="color:rgba(160,70,110,.95);font-weight:600">着</span></div>
+  <div><div class="label">换装</div><div class="sub-label">更改角色服装</div></div>
+</div>
+<div class="row" style="border-left:3px solid rgba(100,170,150,.70);background:rgba(100,170,150,.10)">
+  <div class="ico" style="background:rgba(100,170,150,.30)"><span style="color:rgba(30,120,90,.95);font-weight:600">天</span></div>
+  <div><div class="label">天气</div><div class="sub-label">查看今日天气</div></div>
+</div>
+<div class="row" style="border-left:3px solid rgba(130,140,160,.55);background:rgba(130,140,160,.08)">
+  <div class="ico" style="background:rgba(130,140,160,.25)"><span style="color:rgba(80,80,100,.90);font-weight:600">鎖</span></div>
+  <div><div class="label">锁定位置</div><div class="sub-label">固定桌宠位置</div></div>
+</div>
+</div>
+</div>
+
+<!-- 方案B -->
+<div class="card">
+<h3>B · 纯色实底</h3>
+<p class="note">图标用不透明底色，像App图标</p>
+<div class="preview">
+<div class="row" style="border-left:3px solid rgba(150,120,210,.60);background:transparent">
+  <div class="ico" style="background:rgba(150,120,210,.80)"><span style="color:#fff;font-weight:600;font-size:15px">話</span></div>
+  <div><div class="label">聊天</div><div class="sub-label">打开角色对话</div></div>
+</div>
+<div class="row" style="border-left:3px solid rgba(210,140,170,.60);background:transparent">
+  <div class="ico" style="background:rgba(210,140,170,.80)"><span style="color:#fff;font-weight:600;font-size:15px">着</span></div>
+  <div><div class="label">换装</div><div class="sub-label">更改角色服装</div></div>
+</div>
+<div class="row" style="border-left:3px solid rgba(100,170,150,.60);background:transparent">
+  <div class="ico" style="background:rgba(100,170,150,.80)"><span style="color:#fff;font-weight:600;font-size:15px">天</span></div>
+  <div><div class="label">天气</div><div class="sub-label">查看今日天气</div></div>
+</div>
+<div class="row" style="border-left:3px solid rgba(140,150,170,.50);background:transparent">
+  <div class="ico" style="background:rgba(140,150,170,.65)"><span style="color:#fff;font-weight:600;font-size:15px">鎖</span></div>
+  <div><div class="label">锁定位置</div><div class="sub-label">固定桌宠位置</div></div>
+</div>
+</div>
+</div>
+
+</div>
+
+<!-- 方案C+D -->
+<div class="options" style="margin-top:16px">
+
+<div class="card">
+<h3>C · 加深描边</h3>
+<p class="note">图标加1px深色描边，辨识度更高</p>
+<div class="preview">
+<div class="row" style="border-left:3px solid rgba(150,120,210,.55);background:transparent">
+  <div class="ico" style="background:rgba(150,120,210,.20);border:1.5px solid rgba(150,120,210,.55)"><span style="color:rgba(90,60,150,.85);font-weight:600;font-size:16px">話</span></div>
+  <div><div class="label">聊天</div><div class="sub-label">打开角色对话</div></div>
+</div>
+<div class="row" style="border-left:3px solid rgba(210,140,170,.55);background:transparent">
+  <div class="ico" style="background:rgba(210,140,170,.20);border:1.5px solid rgba(210,140,170,.55)"><span style="color:rgba(160,70,110,.85);font-weight:600;font-size:16px">着</span></div>
+  <div><div class="label">换装</div><div class="sub-label">更改角色服装</div></div>
+</div>
+<div class="row" style="border-left:3px solid rgba(100,170,150,.55);background:transparent">
+  <div class="ico" style="background:rgba(100,170,150,.20);border:1.5px solid rgba(100,170,150,.55)"><span style="color:rgba(30,120,90,.85);font-weight:600;font-size:16px">天</span></div>
+  <div><div class="label">天气</div><div class="sub-label">查看今日天气</div></div>
+</div>
+<div class="row" style="border-left:3px solid rgba(140,150,170,.45);background:transparent">
+  <div class="ico" style="background:rgba(140,150,170,.18);border:1.5px solid rgba(140,150,170,.45)"><span style="color:rgba(80,80,100,.80);font-weight:600;font-size:16px">鎖</span></div>
+  <div><div class="label">锁定位置</div><div class="sub-label">固定桌宠位置</div></div>
+</div>
+</div>
+</div>
+
+<!-- 方案D：深色背景对比 -->
+<div class="card dark">
+<h3>深色背景下当前效果（参考）</h3>
+<p class="note">当前代码在暗色下很好，只需要浅色下调整</p>
+<div class="preview">
+<div class="row" style="border-left:3px solid rgba(170,150,210,.45);background:rgba(170,150,210,.08)">
+  <div class="ico" style="background:rgba(170,150,210,.22)"><span style="color:rgba(200,180,240,.8);font-weight:600">話</span></div>
+  <div><div class="label">聊天</div><div class="sub-label">打开角色对话</div></div>
+</div>
+<div class="row" style="border-left:3px solid rgba(210,150,170,.45);background:rgba(210,150,170,.08)">
+  <div class="ico" style="background:rgba(210,150,170,.22)"><span style="color:rgba(230,180,200,.8);font-weight:600">着</span></div>
+  <div><div class="label">换装</div><div class="sub-label">更改角色服装</div></div>
+</div>
+</div>
+</div>
+
+</div>
+
+<p style="margin-top:20px;color:#666;font-size:12px">推荐 A（最简单，改 alpha 值即可）或 C（加描边增加层次感）。打开 http://localhost:13840/light-theme-icons.html 查看。</p>
+
+</body>
+</html>

@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>径向菜单 白天/黑夜 主题方案</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',system-ui,sans-serif;padding:24px;background:#e8ecf2;color:#222}
+h1{font-size:20px;margin-bottom:4px}
+.sub{color:#666;margin-bottom:24px;font-size:13px}
+.options{display:flex;gap:20px;flex-wrap:wrap}
+
+.scene{border-radius:12px;padding:20px;width:360px}
+.scene.dark{background:#1a1d2e;color:#dce4f7}
+.scene.light{background:#f0f2f5;color:#222;border:1px solid #dde}
+.scene h3{font-size:13px;margin-bottom:10px}
+.scene.dark h3{color:#c4cee8}
+.scene.light h3{color:#444}
+
+.preview{display:flex;flex-direction:column;gap:5px;margin-bottom:10px}
+
+/* Card row */
+.row{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:10px;cursor:pointer;transition:background .12s}
+.ico{width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-weight:700;font-size:17px}
+.txt{flex:1}.txt .t{font-size:13px;font-weight:600}.txt .h{font-size:10px;color:#999}
+.scene.dark .txt .h{color:#8895b4}
+
+.stripe{width:3px;border-radius:2px;flex-shrink:0;height:34px}
+
+.tag{display:inline-block;padding:1px 7px;border-radius:4px;font-size:11px;margin-left:6px}
+.tag.rec{background:#e8f0ff;color:#3b5ccc}
+.tag.now{background:#fff0e0;color:#c80}
+
+.label{margin-top:8px;font-size:11px;color:#888}
+</style>
+</head>
+<body>
+
+<h1>径向菜单主题方案</h1>
+<p class="sub">左侧卡片在浅色/深色壁纸下各是什么效果</p>
+
+<!-- 方案1：深色卡片 + 亮色内容（当前） -->
+<div class="options">
+
+<div class="scene dark">
+<h3>深色壁纸 · 方案1（当前） <span class="tag now">现版本</span></h3>
+<div class="preview">
+<div class="row" style="background:rgba(20,20,30,.35);border-left:3px solid rgba(200,180,240,.60)">
+  <div class="ico" style="background:rgba(170,150,210,.50)"><span style="color:rgba(255,255,255,.85)">◈</span></div>
+  <div class="txt"><div class="t">聊天</div><div class="h">打开角色对话</div></div>
+</div>
+<div class="row" style="background:rgba(20,20,30,.35);border-left:3px solid rgba(230,180,200,.60)">
+  <div class="ico" style="background:rgba(210,150,170,.50)"><span style="color:rgba(255,255,255,.85)">✦</span></div>
+  <div class="txt"><div class="t">换装</div><div class="h">更改角色服装</div></div>
+</div>
+<div class="row" style="background:rgba(20,20,30,.35);border-left:3px solid rgba(180,220,200,.60)">
+  <div class="ico" style="background:rgba(130,190,170,.50)"><span style="color:rgba(255,255,255,.85)">☀</span></div>
+  <div class="txt"><div class="t">天气</div><div class="h">查看今日天气</div></div>
+</div>
+</div>
+<label class="label">暗色壁纸上：✅ 清晰可见</label>
+</div>
+
+<div class="scene light">
+<h3>浅色壁纸 · 方案1（当前） <span class="tag now">现版本</span></h3>
+<div class="preview">
+<div class="row" style="background:rgba(20,20,30,.35);border-left:3px solid rgba(200,180,240,.60)">
+  <div class="ico" style="background:rgba(170,150,210,.50)"><span style="color:rgba(255,255,255,.85)">◈</span></div>
+  <div class="txt"><div class="t">聊天</div><div class="h">打开角色对话</div></div>
+</div>
+<div class="row" style="background:rgba(20,20,30,.35);border-left:3px solid rgba(230,180,200,.60)">
+  <div class="ico" style="background:rgba(210,150,170,.50)"><span style="color:rgba(255,255,255,.85)">✦</span></div>
+  <div class="txt"><div class="t">换装</div><div class="h">更改角色服装</div></div>
+</div>
+<div class="row" style="background:rgba(20,20,30,.35);border-left:3px solid rgba(180,220,200,.60)">
+  <div class="ico" style="background:rgba(130,190,170,.50)"><span style="color:rgba(255,255,255,.85)">☀</span></div>
+  <div class="txt"><div class="t">天气</div><div class="h">查看今日天气</div></div>
+</div>
+</div>
+<label class="label">浅色壁纸上：✅ 深色卡片提供对比度，也能看清<br>⚠️ 但深色卡片在白色桌面上略显突兀</label>
+</div>
+
+</div>
+
+<!-- 方案2：跟随系统主题切换 -->
+<div class="options" style="margin-top:20px">
+
+<div class="scene dark">
+<h3>深色壁纸 · 方案2（跟随系统主题） <span class="tag rec">推荐</span></h3>
+<div class="preview">
+<div class="row" style="background:rgba(20,20,30,.35);border-left:3px solid rgba(200,180,240,.60)">
+  <div class="ico" style="background:rgba(170,150,210,.50)"><span style="color:rgba(255,255,255,.85)">◈</span></div>
+  <div class="txt"><div class="t">聊天</div><div class="h">打开角色对话</div></div>
+</div>
+<div class="row" style="background:rgba(20,20,30,.35);border-left:3px solid rgba(230,180,200,.60)">
+  <div class="ico" style="background:rgba(210,150,170,.50)"><span style="color:rgba(255,255,255,.85)">✦</span></div>
+  <div class="txt"><div class="t">换装</div><div class="h">更改角色服装</div></div>
+</div>
+<div class="row" style="background:rgba(20,20,30,.35);border-left:3px solid rgba(180,220,200,.60)">
+  <div class="ico" style="background:rgba(130,190,170,.50)"><span style="color:rgba(255,255,255,.85)">☀</span></div>
+  <div class="txt"><div class="t">天气</div><div class="h">查看今日天气</div></div>
+</div>
+</div>
+<label class="label">暗色模式：深卡片 + 亮图标，和当前一样</label>
+</div>
+
+<div class="scene light">
+<h3>浅色壁纸 · 方案2（跟随系统主题） <span class="tag rec">推荐</span></h3>
+<div class="preview">
+<div class="row" style="background:rgba(255,255,255,.85);border-left:3px solid rgba(150,120,200,.60);box-shadow:0 1px 3px rgba(0,0,0,.08)">
+  <div class="ico" style="background:rgba(150,120,200,.22)"><span style="color:rgba(90,60,150,.85)">◈</span></div>
+  <div class="txt"><div class="t">聊天</div><div class="h">打开角色对话</div></div>
+</div>
+<div class="row" style="background:rgba(255,255,255,.85);border-left:3px solid rgba(200,130,160,.60);box-shadow:0 1px 3px rgba(0,0,0,.08)">
+  <div class="ico" style="background:rgba(200,130,160,.22)"><span style="color:rgba(160,70,110,.85)">✦</span></div>
+  <div class="txt"><div class="t">换装</div><div class="h">更改角色服装</div></div>
+</div>
+<div class="row" style="background:rgba(255,255,255,.85);border-left:3px solid rgba(100,170,150,.60);box-shadow:0 1px 3px rgba(0,0,0,.08)">
+  <div class="ico" style="background:rgba(100,170,150,.22)"><span style="color:rgba(30,120,90,.85)">☀</span></div>
+  <div class="txt"><div class="t">天气</div><div class="h">查看今日天气</div></div>
+</div>
+</div>
+<label class="label">浅色模式：白卡片 + 彩色图标 + 深色文字<br>✅ 融入浅色桌面，不突兀</label>
+</div>
+
+</div>
+
+<p style="margin-top:20px;color:#888;font-size:12px">推荐方案2：深色壁纸用深卡+亮字，浅色壁纸用白卡+彩色字。用 darkdetect 库（已经是依赖）检测系统主题自动切换。<br>打开 http://localhost:13840/radial-themes.html 查看。</p>
+
+</body>
+</html>

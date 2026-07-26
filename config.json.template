@@ -85,7 +85,7 @@
   "tts_volume": 0.7,
   "tts_translate_to_selected_language": true,
   "media_overlay_enabled": true,
-  "media_control_style": "aurora",
+  "media_control_style": "sakura",
   "weather_enabled": false,
   "weather_private_key": "",
   "weather_key_id": "",

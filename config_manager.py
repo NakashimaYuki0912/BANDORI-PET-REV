@@ -184,7 +184,7 @@ DEFAULTS = {
     "tts_volume": 0.7,
     "tts_translate_to_selected_language": True,
     "media_overlay_enabled": True,
-    "media_control_style": "aurora",
+    "media_control_style": "sakura",
     "weather_enabled": False,
     "weather_private_key": "",
     "weather_key_id": "",

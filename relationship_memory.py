@@ -45,15 +45,20 @@ MEMORY_KIND_LABELS = {
     "note": "记录",
 }
 
-_MEMORY_PATTERNS = (
-    (r"(?:请|帮我)?记住[：:，,\s]*(.{2,120})", "manual", 90, "用户希望我记住：{value}"),
-    (r"(?:我叫|我的名字是|你可以叫我)[：:，,\s]*(.{1,24})", "profile", 85, "用户的称呼是：{value}"),
-    (r"我的生日(?:是|在)?[：:，,\s]*(.{2,40})", "profile", 85, "用户的生日是：{value}"),
-    (r"我(?:很|最|超)?喜欢[：:，,\s]*(.{1,50})", "preference", 72, "用户喜欢：{value}"),
-    (r"我(?:不喜欢|讨厌)[：:，,\s]*(.{1,50})", "preference", 72, "用户不喜欢：{value}"),
-    (r"我住在[：:，,\s]*(.{2,50})", "profile", 70, "用户住在：{value}"),
-    (r"我是[：:，,\s]*(.{2,60})", "profile", 58, "用户自我描述：{value}"),
+_MEMORY_PATTERNS = tuple(
+    (re.compile(pattern), kind, importance, template)
+    for pattern, kind, importance, template in (
+        (r"(?:请|帮我)?记住[：:，,\s]*(.{2,120})", "manual", 90, "用户希望我记住：{value}"),
+        (r"(?:我叫|我的名字是|你可以叫我)[：:，,\s]*(.{1,24})", "profile", 85, "用户的称呼是：{value}"),
+        (r"我的生日(?:是|在)?[：:，,\s]*(.{2,40})", "profile", 85, "用户的生日是：{value}"),
+        (r"我(?:很|最|超)?喜欢[：:，,\s]*(.{1,50})", "preference", 72, "用户喜欢：{value}"),
+        (r"我(?:不喜欢|讨厌)[：:，,\s]*(.{1,50})", "preference", 72, "用户不喜欢：{value}"),
+        (r"我住在[：:，,\s]*(.{2,50})", "profile", 70, "用户住在：{value}"),
+        (r"我是[：:，,\s]*(.{2,60})", "profile", 58, "用户自我描述：{value}"),
+    )
 )
+
+_VALUE_CUT_RE = re.compile(r"[。！？!?;\n\r]")
 
 _POSITIVE_TERMS = (
     "谢谢",
@@ -160,7 +165,7 @@ def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
 
 
 def _clean_value(value: str, limit: int = 80) -> str:
-    value = re.split(r"[。！？!?;\n\r]", value.strip(), 1)[0].strip(" ：:，,。. ")
+    value = _VALUE_CUT_RE.split(value.strip(), 1)[0].strip(" ：:，,。. ")
     if len(value) > limit:
         value = value[:limit].rstrip() + "..."
     return value
@@ -171,7 +176,7 @@ def extract_memories(user_text: str) -> list[dict]:
     memories = []
     seen = set()
     for pattern, kind, importance, template in _MEMORY_PATTERNS:
-        for match in re.finditer(pattern, text):
+        for match in pattern.finditer(text):
             value = _clean_value(match.group(1))
             if not value:
                 continue

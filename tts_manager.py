@@ -19,6 +19,7 @@ import soundfile as sf
 
 from PySide6.QtCore import QObject, QThread, QTimer, Signal
 
+from daily_chat import complete_daily_chat_texts
 from process_utils import app_base_dir
 
 # ---------------------------------------------------------------------------
@@ -311,16 +312,22 @@ def strip_tts_action_tags(text: str) -> str:
     return _ACTION_TAG_RE.sub("", text).strip()
 
 
+_TTS_SENTENCE_RE = re.compile(r".+?(?:[。！？!?；;]+|$)", re.S)
+_TTS_WS_RE = re.compile(r"[ \t\r\f\v]+")
+_TTS_NL_RE = re.compile(r"\n+")
+_TTS_CLAUSE_RE = re.compile(r".+?(?:[，、,：:]+|$)", re.S)
+
+
 def split_tts_segments(text: str, max_chars: int = 90) -> list[str]:
     """Split assistant text into small TTS-friendly segments."""
     cleaned = strip_tts_action_tags(str(text or ""))
-    cleaned = re.sub(r"[ \t\r\f\v]+", " ", cleaned)
-    cleaned = re.sub(r"\n+", "\n", cleaned).strip()
+    cleaned = _TTS_WS_RE.sub(" ", cleaned)
+    cleaned = _TTS_NL_RE.sub("\n", cleaned).strip()
     if not cleaned:
         return []
 
     pieces: list[str] = []
-    sentence_re = re.compile(r".+?(?:[。！？!?；;]+|$)", re.S)
+    sentence_re = _TTS_SENTENCE_RE
     for paragraph in (part.strip() for part in cleaned.splitlines()):
         if not paragraph:
             continue
@@ -336,7 +343,7 @@ def _split_tts_long_segment(text: str, max_chars: int) -> list[str]:
         return [text]
     segments: list[str] = []
     current = ""
-    for chunk in re.findall(r".+?(?:[，、,：:]+|$)", text, flags=re.S):
+    for chunk in _TTS_CLAUSE_RE.findall(text):
         chunk = chunk.strip()
         if not chunk:
             continue
@@ -387,16 +394,20 @@ def tts_cache_path(text: str, character: str, config: dict) -> pathlib.Path:
     ]
     key = "\n".join(key_parts)
     digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+    # No mkdir here: pure cache-hit lookups (hundreds during greeting prewarm)
+    # should not pay directory syscalls. The write path creates the directory
+    # itself right before the atomic replace.
     cache_dir = app_base_dir() / "tts_cache" / "gpt_sovits" / ref_char
-    cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir / f"{digest}.wav"
 
 
 def collect_greeting_tts_lines(greetings: dict) -> list[str]:
     """Collect all unique non-empty text lines from a ``greetings.json`` dict.
 
-    Order: ``startup_greeting`` → ``click_responses[].lines`` → ``tiers[].lines``.
-    Duplicates are removed while preserving first-occurrence order.
+    The order is ``startup_greeting`` → ``daily_chat``. If no daily-chat pool
+    is configured, legacy ``click_responses[].lines`` and ``tiers[].lines``
+    are used instead. Duplicates are removed while preserving
+    first-occurrence order.
     """
     seen: set[str] = set()
     result: list[str] = []
@@ -412,6 +423,11 @@ def collect_greeting_tts_lines(greetings: dict) -> list[str]:
     startup = greetings.get("startup_greeting", [])
     if isinstance(startup, list):
         _add(startup)
+    # daily_chat replaces legacy double-click lines, but not startup greetings
+    daily_lines = complete_daily_chat_texts(greetings)
+    if daily_lines:
+        _add(daily_lines)
+        return result
     # click_responses
     for entry in greetings.get("click_responses", []) or []:
         if isinstance(entry, dict):
@@ -727,8 +743,13 @@ class CachedTTSRequestWorker(TTSRequestWorker):
         ref_char = self._reference_character()
         cache_path = tts_cache_path(self._text, ref_char, self._config)
 
-        # Cache hit — return cached wav bytes
-        if cache_path.exists() and cache_path.stat().st_size > 44:
+        # Cache hit — return cached wav bytes (single stat instead of
+        # exists() + stat())
+        try:
+            cache_hit = cache_path.stat().st_size > 44
+        except OSError:
+            cache_hit = False
+        if cache_hit:
             try:
                 audio_bytes = cache_path.read_bytes()
                 if self._play_when_ready:

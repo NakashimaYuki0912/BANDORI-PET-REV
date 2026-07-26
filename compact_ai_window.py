@@ -5,6 +5,11 @@ import re
 import sys
 from datetime import datetime
 
+# Precompiled: used per assistant reply during TTS cleanup.
+_INLINE_SOURCES_TAIL_RE = re.compile(
+    r"\{\s*\"(?:web_search_sources|search_sources|sources)\"\s*:\s*\[.*", re.S
+)
+
 from PySide6.QtCore import QEvent, QEasingCurve, QObject, QPoint, QPropertyAnimation, Qt, QThread, QTimer, Signal, QRect, QRectF
 from PySide6.QtGui import QColor, QKeyEvent, QPainter, QPainterPath, QPen, QBrush, QTextCursor
 from PySide6.QtWidgets import (
@@ -201,6 +206,9 @@ class CompactAIWindow(QWidget):
         self._last_user_text = ""
         self._last_user_message_id: int | None = None
         self._stream_text = ""
+        # True while the QTextEdit document is known to exactly mirror
+        # _stream_text, enabling O(delta) appends during streaming.
+        self._stream_output_synced = False
         self._thinking_text = ""
         self._tts_worker = None
         self._tts_workers = {}
@@ -498,6 +506,7 @@ class CompactAIWindow(QWidget):
         return self._target_output_height() + self._input_shell.height() + spacing + margins.top() + margins.bottom()
 
     def _set_output_text(self, text: str, animated: bool = True):
+        self._stream_output_synced = False
         self._output.setPlainText(text)
         self._update_output_height(animated=animated)
 
@@ -908,8 +917,18 @@ class CompactAIWindow(QWidget):
         clean = strip_action_tags(text)
         if not clean:
             return
+        had_stream = bool(self._stream_text)
         self._stream_text += clean
-        self._set_output_text(self._stream_text)
+        if had_stream and self._stream_output_synced:
+            # Append only the delta instead of re-setting (and re-laying-out)
+            # the whole accumulated document on every streamed chunk.
+            self._output.moveCursor(QTextCursor.MoveOperation.End)
+            self._output.insertPlainText(clean)
+            self._update_output_height()
+            self._stream_output_synced = True
+        else:
+            self._set_output_text(self._stream_text)
+            self._stream_output_synced = True
         self._scroll_output_to_bottom()
 
     def _on_response_finished(self, full_text: str, reasoning_text: str, actions: list):
@@ -1092,7 +1111,7 @@ class CompactAIWindow(QWidget):
         return {key: self._cfg.get(key, None) for key in keys} if self._cfg else {}
 
     def _clean_tts_payload(self, text: str) -> str:
-        text = re.sub(r"\{\s*\"(?:web_search_sources|search_sources|sources)\"\s*:\s*\[.*", "", text, flags=re.S)
+        text = _INLINE_SOURCES_TAIL_RE.sub("", text)
         return strip_tts_action_tags(text).strip()
 
     def _reset_tts(self, stop_player: bool = True):

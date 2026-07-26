@@ -3,13 +3,14 @@ import os
 import sys
 
 from process_utils import app_base_dir, ipc_server_name, set_windows_app_user_model_id
+from fluent_bootstrap import apply_qt_font_fallback
 
 BASE_DIR = str(app_base_dir())
 
 _log_path = os.path.join(BASE_DIR, "settings_error.log")
 sys.stderr = open(_log_path, "w", encoding="utf-8", buffering=1)
 
-from PySide6.QtCore import Qt, QObject, QThread, Signal
+from PySide6.QtCore import Qt, QObject, QThread, QTimer, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtNetwork import QLocalSocket
 from PySide6.QtWidgets import QApplication
@@ -80,6 +81,7 @@ def main():
     set_windows_app_user_model_id("BandoriPet.Settings")
 
     app = QApplication(sys.argv)
+    apply_qt_font_fallback(app)
     app.setQuitOnLastWindowClosed(False)  # Keep process alive when window is hidden
 
     if sys.platform == "darwin":
@@ -152,9 +154,9 @@ def main():
                 window.raise_()
                 window.activateWindow()
             elif cmd == "SHOW_COSTUMES":
-                window.show()
-                window.raise_()
-                window.activateWindow()
+                was_visible = window.isVisible()
+                if was_visible:
+                    window.hide()
                 char = (
                     window._selected_list_character
                     or window._current_char
@@ -163,6 +165,9 @@ def main():
                 if char:
                     window._selected_list_character = char
                     window._switch_costume_direct()
+                window.show()
+                window.raise_()
+                window.activateWindow()
             elif cmd == "QUIT":
                 app.quit()
         except Exception:

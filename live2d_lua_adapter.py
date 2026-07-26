@@ -404,6 +404,14 @@ class LuaLAppModel:
         self.expressions = {}
         self._pending_parameters = {}
         self._draw_opts = None
+        # Per-frame Lua table reuse: keep one Lua table per parameter id and
+        # one shared "parameters" list table, rebuilt only when the set of
+        # pending parameter ids changes. Each Lua table field assignment is a
+        # Python->Lua FFI crossing, so avoiding per-frame table allocation
+        # and re-assignment keeps Draw() cheap at 60fps.
+        self._param_item_tables = {}
+        self._params_table = None
+        self._params_key = None
 
     def LoadModelJson(self, model_json_path: str, disable_precision=False):
         del disable_precision
@@ -436,19 +444,36 @@ class LuaLAppModel:
             return
         if self._draw_opts is None:
             self._draw_opts = self._module._lua.table()
+            self._draw_opts[b"clear"] = False
         opts = self._draw_opts
-        opts[b"clear"] = False
         opts[b"time_msec"] = time.monotonic() * 1000.0
-        opts[b"parameters"] = None
-        if self._pending_parameters:
-            params = self._module._lua.table()
-            for index, (param_id, value, weight) in enumerate(self._pending_parameters.values(), 1):
-                item = self._module._lua.table()
-                item[b"id"] = str(param_id).encode("utf-8")
+        pending = self._pending_parameters
+        if pending:
+            key = tuple(pending.keys())
+            if key != self._params_key:
+                # Parameter id set changed: rebuild the list table once,
+                # reusing the per-id item tables (id bytes encoded once).
+                item_tables = self._param_item_tables
+                params = self._module._lua.table()
+                for index, param_id in enumerate(key, 1):
+                    item = item_tables.get(param_id)
+                    if item is None:
+                        item = self._module._lua.table()
+                        item[b"id"] = str(param_id).encode("utf-8")
+                        item_tables[param_id] = item
+                    params[index] = item
+                self._params_table = params
+                self._params_key = key
+                opts[b"parameters"] = params
+            item_tables = self._param_item_tables
+            for param_id, (_pid, value, weight) in pending.items():
+                item = item_tables[param_id]
                 item[b"value"] = float(value)
                 item[b"weight"] = float(weight)
-                params[index] = item
-            opts[b"parameters"] = params
+        elif self._params_key is not None:
+            opts[b"parameters"] = None
+            self._params_table = None
+            self._params_key = None
         self._module._draw(self._renderer, opts)
 
     def Drag(self, x: float, y: float):

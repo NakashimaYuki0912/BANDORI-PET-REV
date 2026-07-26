@@ -240,7 +240,9 @@ class PixelPetWidget(QWidget):
             y = base_y + local_y + dy
             if x < 0 or y < 0 or x >= self._sheet_image.width() or y >= self._sheet_image.height():
                 continue
-            alpha = max(alpha, self._sheet_image.pixelColor(x, y).alpha())
+            # pixel() returns QRgb (ARGB) directly — same alpha as
+            # pixelColor().alpha() without allocating a QColor per probe.
+            alpha = max(alpha, (self._sheet_image.pixel(x, y) >> 24) & 0xFF)
             if alpha > self._hit_alpha_threshold:
                 break
         return alpha

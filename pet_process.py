@@ -3,6 +3,7 @@ import os
 import sys
 
 from process_utils import app_base_dir, ensure_xwayland
+from fluent_bootstrap import apply_qt_font_fallback
 
 BASE_DIR = str(app_base_dir())
 
@@ -81,6 +82,7 @@ def main():
     )
 
     app = QApplication(sys.argv)
+    apply_qt_font_fallback(app)
 
     if sys.platform == "darwin":
         import macos_patch

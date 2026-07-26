@@ -2,6 +2,7 @@ import math
 import ctypes
 import os
 import sys
+import time
 from dataclasses import dataclass
 
 if os.name == "nt":
@@ -10,7 +11,7 @@ from typing import Callable
 
 from PySide6.QtCore import (
     Qt, Signal, QPoint, QSize, QPropertyAnimation, QEasingCurve, QTimer,
-    QParallelAnimationGroup, QVariantAnimation, QRect, QRectF,
+    QParallelAnimationGroup, QVariantAnimation, QRect, QRectF, QPointF,
 )
 from PySide6.QtGui import (
     QPainter, QColor, QPen, QBrush, QMouseEvent,
@@ -29,6 +30,7 @@ from win32_constants import (
     WM_NCCALCSIZE,
     SWP_NOSIZE, SWP_NOMOVE, SWP_NOZORDER, SWP_NOACTIVATE, SWP_FRAMECHANGED,
 )
+from process_utils import app_base_dir
 
 if os.name == "nt":
     _user32 = ctypes.windll.user32
@@ -64,8 +66,8 @@ VK_LBUTTON = 0x01
 VK_RBUTTON = 0x02
 VK_MBUTTON = 0x04
 
-MEDIA_CARD_WIDTH = 310
-MEDIA_CARD_HEIGHT = 144
+MEDIA_CARD_WIDTH = 340
+MEDIA_CARD_HEIGHT = 160
 MEDIA_PANEL_INSET = 4
 MEDIA_CARD_RADIUS = 18
 MEDIA_CONTROL_SECONDARY_SIZE = 34
@@ -81,6 +83,46 @@ MEDIA_TITLE_LEFT_MARGIN = 14
 MEDIA_TITLE_TOP_MARGIN = 14
 MEDIA_TRACK_TOP_OFFSET = 32
 MEDIA_TRACK_HEIGHT = 32
+
+_PICTURES_DIR = os.path.join(str(app_base_dir()), "pictures")
+_MEDIA_CARD_IMAGE_SPECS = {
+    "sakura": (
+        "01_sakura_play.png",
+        "01_sakura_pause.png",
+        QRectF(48, 41, 1592, 810),
+        QRectF(1097, 603, 68, 76),
+    ),
+    "sky": (
+        "02_sky_play.png",
+        "02_sky_pause.png",
+        QRectF(0, 0, 1694, 929),
+        QRectF(1087, 634, 73, 82),
+    ),
+    "matcha": (
+        "03_matcha_play.png",
+        "03_matcha_pause.png",
+        QRectF(44, 49, 1617, 834),
+        QRectF(1085, 635, 70, 79),
+    ),
+    "ink": (
+        "04_ink_play.png",
+        "04_ink_pause.png",
+        QRectF(21, 23, 1673, 906),
+        QRectF(1090, 630, 71, 80),
+    ),
+    "sunset": (
+        "05_sunset_play.png",
+        "05_sunset_pause.png",
+        QRectF(37, 57, 1623, 804),
+        QRectF(1098, 628, 70, 78),
+    ),
+    "snow": (
+        "06_snow_play.png",
+        "06_snow_pause.png",
+        QRectF(56, 70, 1588, 769),
+        QRectF(1182, 585, 59, 66),
+    ),
+}
 
 if sys.platform == "darwin":
     import macos_patch
@@ -158,10 +200,17 @@ class RadialMenuItem(QWidget):
         # Icon / glyph — top portion (upper ~55%)
         if self._icon and not self._icon.isNull():
             icon_size = int(r * 0.5)
-            scaled = self._icon.scaled(
-                icon_size, icon_size, Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation
-            )
+            # Widget size is fixed, so cache the smooth-scaled icon instead of
+            # rescaling on every animation-frame repaint.
+            cached = getattr(self, "_scaled_icon_cache", None)
+            if cached is not None and cached[0] == icon_size:
+                scaled = cached[1]
+            else:
+                scaled = self._icon.scaled(
+                    icon_size, icon_size, Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation
+                )
+                self._scaled_icon_cache = (icon_size, scaled)
             p.drawPixmap(int(cx - icon_size / 2), int(cy - icon_size / 2 - r * 0.18), scaled)
         elif self._glyph:
             font = p.font()
@@ -203,307 +252,241 @@ class RadialMenuItem(QWidget):
 
 _STYLE_SHEETS = {}
 
-def _media_style_aurora() -> str:
-    """极光 — vertical flowing bands (green/teal/purple) with streak mask."""
-    return """
-        QFrame#aurora {
-            background: transparent;
-            border: 1px solid rgba(80,180,160,56);
-            border-radius: 16px;
-        }
-        QLabel#mediaAppLabel {
-            color: rgba(160,210,200,191);
-            font-size: 10px;
-            font-weight: 700;
-        }
-        QLabel#mediaTrackLabel {
-            color: rgba(200,235,225,224);
-            font-size: 11px;
-            font-weight: 600;
-        }
-        QPushButton {
-            background: rgba(100,190,170,89);
-            border: 1px solid rgba(100,200,170,38);
-            border-radius: 13px;
-            min-width: 0px; min-height: 0px;
-            margin: 0px; padding: 0px;
-        }
+_MEDIA_STYLE_MENU_BUTTON_QSS = """
         QPushButton#mediaStyleButton {
-            background: rgba(100,180,160,26);
-            border: 1px solid rgba(80,180,160,41);
-            color: rgba(140,200,180,153);
-            min-width: 24px; min-height: 24px;
-            border-radius: 12px;
-            font-weight: 700;
-        }
-        QPushButton#mediaPlayButton {
-            background: rgba(70,200,150,179);
+            background: transparent;
             border: none;
-            border-radius: 13px;
+            color: transparent;
         }
-        QPushButton:hover { background: rgba(120,210,185,128); }
-        QPushButton:pressed { background: rgba(60,170,140,179); }
-    """
-
-
-def _media_style_neon() -> str:
-    """霓虹脉冲 — scan-line grid + neon glow border."""
-    return """
-        QFrame#neon {
+        QPushButton#mediaStyleButton:hover {
             background: transparent;
-            border: 1px solid rgba(0,210,240,89);
-            border-radius: 14px;
-        }
-        QLabel#mediaAppLabel {
-            color: rgba(100,230,245,191);
-            font-size: 10px;
-            font-weight: 700;
-        }
-        QLabel#mediaTrackLabel {
-            color: rgba(200,248,255,230);
-            font-size: 11px;
-            font-weight: 600;
-        }
-        QPushButton {
-            background: rgba(0,180,220,31);
-            border: 1px solid rgba(0,200,230,46);
-            border-radius: 13px;
-            min-width: 0px; min-height: 0px;
-            margin: 0px; padding: 0px;
-        }
-        QPushButton#mediaStyleButton {
-            background: rgba(0,180,210,26);
-            border: 1px solid rgba(0,200,230,51);
-            color: rgba(100,230,245,153);
-            min-width: 24px; min-height: 24px;
-            border-radius: 12px;
-            font-weight: 700;
-        }
-        QPushButton#mediaPlayButton {
-            background: rgba(0,210,240,153);
-            border: 1px solid rgba(150,240,255,64);
-            border-radius: 13px;
-        }
-        QPushButton:hover { background: rgba(0,200,230,77); }
-        QPushButton:pressed { background: rgba(0,160,200,128); }
-    """
-
-
-def _media_style_glass() -> str:
-    """磨砂玻璃 — translucent layers with edge highlights."""
-    return """
-        QFrame#glass {
-            background: transparent;
-            border: 1px solid rgba(255,255,255,36);
-            border-radius: 16px;
-        }
-        QLabel#mediaAppLabel {
-            color: rgba(255,255,255,153);
-            font-size: 10px;
-            font-weight: 700;
-        }
-        QLabel#mediaTrackLabel {
-            color: rgba(255,255,255,224);
-            font-size: 11px;
-            font-weight: 600;
-        }
-        QPushButton {
-            background: rgba(255,255,255,26);
-            border: 1px solid rgba(255,255,255,26);
-            border-radius: 13px;
-            min-width: 0px; min-height: 0px;
-            margin: 0px; padding: 0px;
-        }
-        QPushButton#mediaStyleButton {
-            background: rgba(255,255,255,20);
-            color: rgba(255,255,255,128);
-            min-width: 24px; min-height: 24px;
-            border-radius: 12px;
-            font-weight: 700;
-        }
-        QPushButton#mediaPlayButton {
-            background: rgba(255,255,255,46);
-            border: 1px solid rgba(255,255,255,26);
-            border-radius: 13px;
-        }
-        QPushButton:hover { background: rgba(255,255,255,64); }
-        QPushButton:pressed { background: rgba(255,255,255,102); }
-    """
-
-
-def _media_style_velvet() -> str:
-    """丝绒暗夜 — deep purple/gold gradient with inner border."""
-    return """
-        QFrame#velvet {
-            background: transparent;
-            border: 1px solid rgba(180,150,100,56);
-            border-radius: 16px;
-        }
-        QLabel#mediaAppLabel {
-            color: rgba(200,170,130,166);
-            font-size: 10px;
-            font-weight: 700;
-        }
-        QLabel#mediaTrackLabel {
-            color: rgba(235,220,200,217);
-            font-size: 11px;
-            font-weight: 600;
-        }
-        QPushButton {
-            background: rgba(180,150,100,26);
-            border: 1px solid rgba(180,150,100,31);
-            border-radius: 13px;
-            min-width: 0px; min-height: 0px;
-            margin: 0px; padding: 0px;
-        }
-        QPushButton#mediaStyleButton {
-            background: rgba(180,150,100,26);
-            border: 1px solid rgba(180,150,100,36);
-            color: rgba(200,170,130,128);
-            min-width: 24px; min-height: 24px;
-            border-radius: 12px;
-            font-weight: 700;
-        }
-        QPushButton#mediaPlayButton {
-            background: rgba(200,155,90,128);
             border: none;
-            border-radius: 13px;
+            color: transparent;
         }
-        QPushButton:hover { background: rgba(200,170,120,64); }
-        QPushButton:pressed { background: rgba(140,110,60,102); }
-    """
+"""
 
-
-def _media_style_prism() -> str:
-    """全息幻彩 — iridescent multi-angle gradients with rainbow sheen."""
+def _media_style_sakura() -> str:
+    """桜 — soft pink with warm tones."""
     return """
-        QFrame#prism {
+        QFrame#sakura {
             background: transparent;
-            border: 1px solid rgba(180,180,200,46);
+            border: 1px solid rgba(220,150,170,60);
             border-radius: 16px;
         }
         QLabel#mediaAppLabel {
-            color: rgba(180,190,220,153);
+            color: rgba(192,96,128,191);
             font-size: 10px;
             font-weight: 700;
         }
         QLabel#mediaTrackLabel {
-            color: rgba(220,225,240,217);
+            color: rgba(74,32,48,224);
             font-size: 11px;
             font-weight: 600;
         }
         QPushButton {
-            background: rgba(180,185,210,20);
-            border: 1px solid rgba(180,185,210,26);
+            background: rgba(210,130,160,64);
+            border: 1px solid rgba(220,150,170,32);
             border-radius: 13px;
             min-width: 0px; min-height: 0px;
             margin: 0px; padding: 0px;
         }
-        QPushButton#mediaStyleButton {
-            background: rgba(255,255,255,15);
-            border: 1px solid rgba(180,180,200,31);
-            color: rgba(180,190,220,128);
-            min-width: 24px; min-height: 24px;
-            border-radius: 12px;
-            font-weight: 700;
+        QPushButton:hover {
+            background: rgba(210,130,160,100);
+            border-color: rgba(220,150,170,70);
         }
-        QPushButton#mediaPlayButton {
-            background: rgba(130,150,210,115);
-            border: none;
-            border-radius: 13px;
-        }
-        QPushButton:hover { background: rgba(255,255,255,51); }
-        QPushButton:pressed { background: rgba(140,140,200,77); }
     """
 
-
-def _media_style_blossom() -> str:
-    """花漾粉 — light pink/white gradient with warm glow."""
+def _media_style_sky() -> str:
+    """空 — clear blue sky with cloud accents."""
     return """
-        QFrame#blossom {
+        QFrame#sky {
             background: transparent;
-            border: 1px solid rgba(230,120,160,77);
+            border: 1px solid rgba(160,200,230,60);
             border-radius: 16px;
         }
         QLabel#mediaAppLabel {
-            color: #b0496b;
+            color: rgba(90,138,181,191);
             font-size: 10px;
             font-weight: 700;
         }
         QLabel#mediaTrackLabel {
-            color: #4a2535;
+            color: rgba(26,48,72,224);
             font-size: 11px;
             font-weight: 600;
         }
         QPushButton {
-            background: rgba(255,255,255,191);
-            border: 1px solid rgba(220,140,170,51);
+            background: rgba(140,180,220,64);
+            border: 1px solid rgba(160,200,230,32);
             border-radius: 13px;
             min-width: 0px; min-height: 0px;
             margin: 0px; padding: 0px;
         }
-        QPushButton#mediaStyleButton {
-            background: rgba(255,255,255,166);
-            border: 1px solid rgba(220,130,160,64);
-            color: #c06080;
-            min-width: 24px; min-height: 24px;
-            border-radius: 12px;
-            font-weight: 700;
+        QPushButton:hover {
+            background: rgba(140,180,220,100);
+            border-color: rgba(160,200,230,70);
         }
-        QPushButton#mediaPlayButton {
-            background: rgba(245,138,176,230);
-            border: none;
-            border-radius: 13px;
-        }
-        QPushButton:hover { background: rgba(255,255,255,235); }
-        QPushButton:pressed { background: rgba(230,100,150,120); }
     """
-
 
 def _media_style_matcha() -> str:
     """抹茶绿 — light mint/emerald gradient, fresh and clean."""
     return """
         QFrame#matcha {
             background: transparent;
-            border: 1px solid rgba(100,190,150,71);
+            border: 1px solid rgba(100,190,150,56);
             border-radius: 16px;
         }
         QLabel#mediaAppLabel {
-            color: #3b7a5c;
+            color: rgba(90,154,122,191);
             font-size: 10px;
             font-weight: 700;
         }
         QLabel#mediaTrackLabel {
-            color: #1e3a2e;
+            color: rgba(24,48,37,224);
             font-size: 11px;
             font-weight: 600;
         }
         QPushButton {
-            background: rgba(255,255,255,184);
-            border: 1px solid rgba(130,200,160,46);
+            background: rgba(100,180,140,64);
+            border: 1px solid rgba(100,190,150,32);
             border-radius: 13px;
             min-width: 0px; min-height: 0px;
             margin: 0px; padding: 0px;
         }
-        QPushButton#mediaStyleButton {
-            background: rgba(255,255,255,153);
-            border: 1px solid rgba(120,190,150,56);
-            color: #48906a;
-            min-width: 24px; min-height: 24px;
-            border-radius: 12px;
+        QPushButton:hover {
+            background: rgba(100,180,140,100);
+            border-color: rgba(100,190,150,70);
+        }
+    """
+
+def _media_style_ink() -> str:
+    """墨 — sumi-e ink wash, warm grey with brush strokes."""
+    return """
+        QFrame#ink {
+            background: transparent;
+            border: 1px solid rgba(120,120,130,36);
+            border-radius: 16px;
+        }
+        QLabel#mediaAppLabel {
+            color: rgba(85,85,85,191);
+            font-size: 10px;
             font-weight: 700;
         }
-        QPushButton#mediaPlayButton {
-            background: rgba(92,196,146,230);
-            border: none;
-            border-radius: 13px;
+        QLabel#mediaTrackLabel {
+            color: rgba(26,26,26,224);
+            font-size: 11px;
+            font-weight: 600;
         }
-        QPushButton:hover { background: rgba(255,255,255,235); }
-        QPushButton:pressed { background: rgba(60,170,110,120); }
+        QPushButton {
+            background: rgba(80,80,90,40);
+            border: 1px solid rgba(120,120,130,28);
+            border-radius: 13px;
+            min-width: 0px; min-height: 0px;
+            margin: 0px; padding: 0px;
+        }
+        QPushButton:hover {
+            background: rgba(80,80,90,60);
+            border-color: rgba(120,120,130,50);
+        }
+    """
+
+def _media_style_sunset() -> str:
+    """夕 — warm orange/pink dusk with horizon."""
+    return """
+        QFrame#sunset {
+            background: transparent;
+            border: 1px solid rgba(220,160,130,60);
+            border-radius: 16px;
+        }
+        QLabel#mediaAppLabel {
+            color: rgba(192,112,80,191);
+            font-size: 10px;
+            font-weight: 700;
+        }
+        QLabel#mediaTrackLabel {
+            color: rgba(58,32,24,224);
+            font-size: 11px;
+            font-weight: 600;
+        }
+        QPushButton {
+            background: rgba(220,160,130,64);
+            border: 1px solid rgba(220,160,130,32);
+            border-radius: 13px;
+            min-width: 0px; min-height: 0px;
+            margin: 0px; padding: 0px;
+        }
+        QPushButton:hover {
+            background: rgba(220,160,130,100);
+            border-color: rgba(220,160,130,70);
+        }
+    """
+
+def _media_style_snow() -> str:
+    """雪 — crisp white with ice-blue tint and snow dots."""
+    return """
+        QFrame#snow {
+            background: transparent;
+            border: 1px solid rgba(180,195,210,44);
+            border-radius: 16px;
+        }
+        QLabel#mediaAppLabel {
+            color: rgba(122,138,154,191);
+            font-size: 10px;
+            font-weight: 700;
+        }
+        QLabel#mediaTrackLabel {
+            color: rgba(21,37,48,224);
+            font-size: 11px;
+            font-weight: 600;
+        }
+        QPushButton {
+            background: rgba(160,180,200,48);
+            border: 1px solid rgba(180,195,210,28);
+            border-radius: 13px;
+            min-width: 0px; min-height: 0px;
+            margin: 0px; padding: 0px;
+        }
+        QPushButton:hover {
+            background: rgba(160,180,200,70);
+            border-color: rgba(180,195,210,50);
+        }
     """
 
 
 _MEDIA_ICON_CACHE: dict[str, QIcon] = {}
+_MEDIA_CARD_PIXMAP_CACHE: dict[tuple[str, str], QPixmap | None] = {}
+_DARK_SYSTEM_CACHE: tuple[bool, float] | None = None
+_MEDIA_SCRIM_COLORS = {
+    "sakura": QColor(255, 248, 251, 255),
+    "sky": QColor(238, 248, 255, 255),
+    "matcha": QColor(250, 252, 236, 255),
+    "ink": QColor(246, 243, 238, 255),
+    "sunset": QColor(255, 232, 220, 255),
+    "snow": QColor(250, 253, 255, 250),
+}
+
+
+def _media_card_pixmap(style: str, variant: str = "play") -> QPixmap | None:
+    style = str(style or "").strip().lower()
+    variant = "pause" if str(variant or "").strip().lower() == "pause" else "play"
+    cache_key = (style, variant)
+    if cache_key in _MEDIA_CARD_PIXMAP_CACHE:
+        return _MEDIA_CARD_PIXMAP_CACHE[cache_key]
+    spec = _MEDIA_CARD_IMAGE_SPECS.get(style)
+    if spec is None:
+        _MEDIA_CARD_PIXMAP_CACHE[cache_key] = None
+        return None
+    play_filename, pause_filename, _source_rect, _pause_rect = spec
+    filename = pause_filename if variant == "pause" else play_filename
+    image_path = os.path.join(_PICTURES_DIR, filename)
+    if not os.path.exists(image_path):
+        _MEDIA_CARD_PIXMAP_CACHE[cache_key] = None
+        return None
+    pixmap = QPixmap(image_path)
+    if pixmap.isNull():
+        _MEDIA_CARD_PIXMAP_CACHE[cache_key] = None
+        return None
+    _MEDIA_CARD_PIXMAP_CACHE[cache_key] = pixmap
+    return pixmap
 
 
 def _center_icon_path(path: QPainterPath, size: int = 32) -> QPainterPath:
@@ -543,6 +526,17 @@ def _pause_icon_path() -> QPainterPath:
     return path
 
 
+def _media_icon_path(name: str) -> QPainterPath:
+    name = str(name or "").strip().lower()
+    if name == "previous":
+        return _previous_icon_path()
+    if name == "next":
+        return _next_icon_path()
+    if name == "pause":
+        return _pause_icon_path()
+    return _play_icon_path()
+
+
 def _media_icon(name: str) -> QIcon:
     name = str(name or "").strip().lower()
     if name in _MEDIA_ICON_CACHE:
@@ -555,14 +549,7 @@ def _media_icon(name: str) -> QIcon:
     painter.setPen(Qt.PenStyle.NoPen)
     painter.setBrush(QColor(34, 34, 42, 235))
 
-    if name == "previous":
-        path = _previous_icon_path()
-    elif name == "next":
-        path = _next_icon_path()
-    elif name == "pause":
-        path = _pause_icon_path()
-    else:
-        path = _play_icon_path()
+    path = _media_icon_path(name)
     painter.drawPath(_center_icon_path(path))
 
     painter.end()
@@ -574,9 +561,10 @@ def _media_icon(name: str) -> QIcon:
 class _MediaControlButton(QPushButton):
     def __init__(self, icon_name: str, *, primary: bool = False, parent=None):
         super().__init__(parent)
-        self._media_style = "aurora"
+        self._media_style = "sakura"
+        self._icon_name = str(icon_name or "play").strip().lower()
         self._primary = primary
-        self.setIcon(_media_icon(icon_name))
+        self.setIcon(_media_icon(self._icon_name))
         self.setContentsMargins(0, 0, 0, 0)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.set_media_button_size(1, 1)
@@ -603,9 +591,16 @@ class _MediaControlButton(QPushButton):
         self._media_style = str(style or "").strip().lower()
         self.update()
 
+    def set_media_icon(self, icon_name: str):
+        self._icon_name = str(icon_name or "play").strip().lower()
+        self.setIcon(_media_icon(self._icon_name))
+        self.update()
+
     def _colors(self):
         style = self._media_style
         if self._primary:
+            if style == "sakura":
+                return QColor(236, 146, 172, 210), QColor(218, 118, 152, 185), QColor(255, 255, 255, 96)
             if style == "neon":
                 return QColor(0, 230, 255, 220), QColor(255, 40, 140, 170), QColor(180, 250, 255, 130)
             if style == "velvet":
@@ -614,13 +609,12 @@ class _MediaControlButton(QPushButton):
                 return QColor(255, 255, 255, 190), QColor(240, 240, 245, 140), QColor(255, 255, 255, 100)
             if style == "prism":
                 return QColor(150, 170, 225, 200), QColor(200, 140, 190, 160), QColor(220, 210, 240, 90)
-            if style == "blossom":
-                return QColor(245, 138, 176, 230), QColor(232, 93, 144, 210), QColor(255, 255, 255, 100)
             if style == "matcha":
                 return QColor(92, 196, 146, 230), QColor(61, 168, 112, 210), QColor(255, 255, 255, 100)
-            # aurora (default primary) — green/teal aurora palette
-            return QColor(70, 200, 150, 179), QColor(50, 170, 130, 155), QColor(100, 220, 180, 80)
+            return QColor(236, 146, 172, 210), QColor(218, 118, 152, 185), QColor(255, 255, 255, 96)
 
+        if style == "sakura":
+            return QColor(255, 252, 253, 184), QColor(247, 229, 236, 154), QColor(228, 170, 185, 72)
         if style == "neon":
             return QColor(0, 200, 240, 120), QColor(0, 180, 220, 100), QColor(0, 230, 255, 150)
         if style == "velvet":
@@ -629,16 +623,17 @@ class _MediaControlButton(QPushButton):
             return QColor(255, 255, 255, 130), QColor(235, 235, 245, 100), QColor(255, 255, 255, 120)
         if style == "prism":
             return QColor(195, 200, 225, 105), QColor(175, 185, 215, 85), QColor(195, 200, 225, 100)
-        if style == "blossom":
-            return QColor(255, 255, 255, 191), QColor(245, 235, 240, 150), QColor(220, 140, 170, 51)
         if style == "matcha":
             return QColor(255, 255, 255, 184), QColor(235, 248, 240, 150), QColor(130, 200, 160, 46)
-        # aurora (default secondary) — teal aurora palette
-        return QColor(100, 190, 170, 89), QColor(80, 170, 150, 70), QColor(100, 200, 170, 38)
+        return QColor(255, 252, 253, 184), QColor(247, 229, 236, 154), QColor(228, 170, 185, 72)
 
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        if self._media_style in _MEDIA_CARD_IMAGE_SPECS and _media_card_pixmap(self._media_style) is not None:
+            painter.end()
+            return
 
         top, bottom, border = self._colors()
         if self.isDown():
@@ -678,31 +673,30 @@ class _MediaControlButton(QPushButton):
 class MediaRadialItem(QFrame):
     """Media control card for the radial menu, replacing standalone overlay.
 
-    Five visual styles: Aurora, Neon, Glass, Velvet, Prism.
-    Aurora is the default.
+    Six visual styles: Sakura, Sky, Matcha, Ink, Sunset, Snow.
+    Sakura is the default.
     """
 
     command_requested = Signal(str)
     style_selected = Signal(str)
 
     VALID_STYLES = frozenset({
-        "aurora",
-        "neon",
-        "glass",
-        "velvet",
-        "prism",
-        "blossom",
+        "sakura",
+        "sky",
         "matcha",
+        "ink",
+        "sunset",
+        "snow",
     })
 
-    def __init__(self, style: str = "aurora", parent=None):
+    def __init__(self, style: str = "sakura", parent=None):
         super().__init__(parent)
-        self._style = "aurora"
+        self._style = "sakura"
         self._snapshot = None
         self._hover = False
         self._debug_overlay = False
 
-        self.setObjectName("aurora")
+        self.setObjectName("sakura")
         self.setFixedSize(MEDIA_CARD_WIDTH, MEDIA_CARD_HEIGHT)
         self.setMouseTracking(True)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -785,6 +779,16 @@ class MediaRadialItem(QFrame):
             MEDIA_PANEL_INSET,
             -MEDIA_PANEL_INSET,
             -MEDIA_PANEL_INSET,
+        )
+
+    def _sakura_content_rect(self, panel_rect=None) -> QRectF:
+        panel_rect = panel_rect or self._panel_rect()
+        content_left = panel_rect.left() + max(124, round(panel_rect.width() * 0.42))
+        return QRectF(
+            content_left,
+            panel_rect.top() + 12,
+            panel_rect.right() + 1 - content_left - 12,
+            panel_rect.height() - 24,
         )
 
     def set_debug_overlay_enabled(self, enabled: bool):
@@ -892,39 +896,154 @@ class MediaRadialItem(QFrame):
             painter.drawEllipse(circle_rect)
         painter.restore()
 
-    def _layout_children(self):
-        panel_rect = self._panel_rect()
-        self._style_menu_button.move(
-            panel_rect.right() + 1 - MEDIA_MENU_RIGHT_MARGIN - self._style_menu_button.width(),
-            panel_rect.top() + MEDIA_MENU_TOP_MARGIN,
+    def _draw_style_menu_button_chrome(self, painter: QPainter):
+        menu_rect = QRectF(self._style_menu_button.geometry())
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+
+        shadow = QColor(160, 100, 120, 20)
+        painter.setBrush(QBrush(shadow))
+        painter.drawRoundedRect(menu_rect.adjusted(1.0, 1.5, 1.0, 2.0), 11.5, 11.5)
+
+        menu_fill = QLinearGradient(menu_rect.topLeft(), menu_rect.bottomLeft())
+        menu_fill.setColorAt(0.0, QColor(255, 247, 250, 178))
+        menu_fill.setColorAt(1.0, QColor(240, 198, 211, 132))
+        painter.setBrush(QBrush(menu_fill))
+        painter.drawRoundedRect(menu_rect, 11.5, 11.5)
+
+        painter.setPen(QPen(QColor(226, 162, 182, 88), 1.0))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(menu_rect.adjusted(0.5, 0.5, -0.5, -0.5), 11, 11)
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor(132, 92, 104, 170)))
+        dot_y = menu_rect.center().y()
+        for dot_x in (menu_rect.center().x() - 6, menu_rect.center().x(), menu_rect.center().x() + 6):
+            painter.drawEllipse(QRectF(dot_x - 1.35, dot_y - 1.35, 2.7, 2.7))
+        painter.restore()
+
+    def _draw_image_pause_patch(self, painter: QPainter, panel_rect: QRect, style: str):
+        if getattr(self._play_btn, "_icon_name", "") != "pause":
+            return
+        spec = _MEDIA_CARD_IMAGE_SPECS.get(style)
+        pause_pixmap = _media_card_pixmap(style, "pause")
+        if spec is None or pause_pixmap is None or pause_pixmap.isNull():
+            return
+
+        _play_filename, _pause_filename, source_rect, pause_rect = spec
+        target_rect = self._map_image_source_rect(panel_rect, source_rect, pause_rect)
+        painter.drawPixmap(target_rect, pause_pixmap, pause_rect)
+
+    def _image_play_button_rect(self, panel_rect: QRect, style: str) -> QRectF | None:
+        spec = _MEDIA_CARD_IMAGE_SPECS.get(style)
+        if spec is None:
+            return None
+        _play_filename, _pause_filename, source_rect, pause_rect = spec
+        return self._map_image_source_rect(panel_rect, source_rect, pause_rect)
+
+    def _draw_image_text_scrim(self, painter: QPainter, panel_rect: QRect, style: str):
+        content_rect = self._sakura_content_rect(panel_rect)
+        controls_top = self._controls_widget.geometry().top()
+        top_scrim_rect = QRectF(
+            content_rect.left() - 10,
+            content_rect.top() + 2,
+            max(24.0, content_rect.width() - 32),
+            min(44.0, max(22.0, controls_top - content_rect.top() - 8)),
         )
-        self._app_label.setGeometry(
-            panel_rect.left() + MEDIA_TITLE_LEFT_MARGIN,
-            panel_rect.top() + MEDIA_TITLE_TOP_MARGIN,
-            panel_rect.width() - MEDIA_TITLE_LEFT_MARGIN * 2 - MEDIA_MENU_SIZE,
-            20,
+        lower_top = content_rect.top() + 50
+        lower_scrim_rect = QRectF(
+            content_rect.left() - 10,
+            lower_top,
+            max(24.0, content_rect.width() - 8),
+            max(0.0, controls_top - lower_top - 6),
         )
-        self._track_label.setGeometry(
-            panel_rect.left() + MEDIA_TITLE_LEFT_MARGIN,
-            panel_rect.top() + MEDIA_TITLE_TOP_MARGIN + MEDIA_TRACK_TOP_OFFSET,
-            panel_rect.width() - MEDIA_TITLE_LEFT_MARGIN * 2,
-            MEDIA_TRACK_HEIGHT,
+        colors = _MEDIA_SCRIM_COLORS
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(colors.get(style, QColor(255, 255, 255, 205))))
+        painter.drawRoundedRect(top_scrim_rect, 10, 10)
+        if lower_scrim_rect.height() > 1:
+            painter.drawRoundedRect(lower_scrim_rect, 8, 8)
+        painter.restore()
+
+    def _map_image_source_rect(self, panel_rect: QRect, source_rect: QRectF, image_rect: QRectF) -> QRectF:
+        scale_x = panel_rect.width() / source_rect.width()
+        scale_y = panel_rect.height() / source_rect.height()
+        return QRectF(
+            panel_rect.left() + (image_rect.left() - source_rect.left()) * scale_x,
+            panel_rect.top() + (image_rect.top() - source_rect.top()) * scale_y,
+            image_rect.width() * scale_x,
+            image_rect.height() * scale_y,
         )
 
+    def _layout_children(self):
+        panel_rect = self._panel_rect()
         spacing = self._controls_layout.spacing()
         group_w = self._prev_btn.width() + self._play_btn.width() + self._next_btn.width() + spacing * 2
         group_h = max(self._prev_btn.height(), self._play_btn.height(), self._next_btn.height())
         self._controls_widget.setFixedSize(group_w, group_h)
 
-        # Center controls horizontally
-        group_x = round(panel_rect.left() + (panel_rect.width() - group_w) / 2)
-        # Center controls vertically in the space below the track label
-        track_bottom = panel_rect.top() + MEDIA_TITLE_TOP_MARGIN + MEDIA_TRACK_TOP_OFFSET + MEDIA_TRACK_HEIGHT
-        available_below = max(group_h, panel_rect.bottom() - track_bottom)
-        group_y = track_bottom + round((available_below - group_h) / 2)
+        self._style_menu_button.setFixedSize(34, 26)
+
+        if self._style in _MEDIA_CARD_IMAGE_SPECS:
+            content_rect = self._sakura_content_rect(panel_rect)
+            self._style_menu_button.move(
+                round(content_rect.right() - 18 - self._style_menu_button.width() / 2),
+                round(content_rect.top() + 18 - self._style_menu_button.height() / 2),
+            )
+            text_rect = content_rect.toRect().adjusted(14, 14, -44, -54)
+            self._sakura_text_rect = text_rect
+            self._app_label.setGeometry(text_rect.left(), text_rect.top(), text_rect.width(), 16)
+            track_y = text_rect.top() + 20
+            self._track_label.setGeometry(
+                text_rect.left(),
+                track_y,
+                text_rect.width(),
+                max(22, text_rect.bottom() + 1 - track_y),
+            )
+
+            image_button_rect = self._image_play_button_rect(panel_rect, self._style)
+            if image_button_rect is not None:
+                play_center = image_button_rect.center()
+                play_offset_x = self._prev_btn.width() + spacing + self._play_btn.width() / 2
+                group_x = round(play_center.x() - play_offset_x)
+                group_y = round(play_center.y() - group_h / 2)
+            else:
+                group_x = round(content_rect.left() + 25)
+                min_group_y = self._track_label.geometry().bottom() + 6
+                group_y = max(min_group_y, round(content_rect.bottom() - 9 - group_h))
+            group_x = max(round(panel_rect.left()), min(group_x, round(panel_rect.right() + 1 - group_w)))
+            group_y = max(round(panel_rect.top()), min(group_y, round(panel_rect.bottom() + 1 - group_h)))
+        else:
+            self._style_menu_button.move(
+                round(panel_rect.right() + 1 - MEDIA_MENU_RIGHT_MARGIN - self._style_menu_button.width()),
+                panel_rect.top() + MEDIA_MENU_TOP_MARGIN,
+            )
+            self._app_label.setGeometry(
+                panel_rect.left() + MEDIA_TITLE_LEFT_MARGIN,
+                panel_rect.top() + MEDIA_TITLE_TOP_MARGIN,
+                panel_rect.width() - MEDIA_TITLE_LEFT_MARGIN * 2 - MEDIA_MENU_SIZE,
+                20,
+            )
+            self._track_label.setGeometry(
+                panel_rect.left() + MEDIA_TITLE_LEFT_MARGIN,
+                panel_rect.top() + MEDIA_TITLE_TOP_MARGIN + MEDIA_TRACK_TOP_OFFSET,
+                panel_rect.width() - MEDIA_TITLE_LEFT_MARGIN * 2,
+                MEDIA_TRACK_HEIGHT,
+            )
+
+            # Center controls horizontally
+            group_x = round(panel_rect.left() + (panel_rect.width() - group_w) / 2)
+            # Center controls vertically in the space below the track label
+            track_bottom = panel_rect.top() + MEDIA_TITLE_TOP_MARGIN + MEDIA_TRACK_TOP_OFFSET + MEDIA_TRACK_HEIGHT
+            available_below = max(group_h, panel_rect.bottom() - track_bottom)
+            group_y = track_bottom + round((available_below - group_h) / 2)
 
         self._controls_widget.setGeometry(group_x, group_y, group_w, group_h)
         self._controls_layout.activate()
+        self._refresh_snapshot_labels()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -935,7 +1054,7 @@ class MediaRadialItem(QFrame):
     def set_style(self, style: str):
         style = str(style or "").strip().lower()
         if style not in self.VALID_STYLES:
-            style = "aurora"
+            style = "sakura"
         self._style = style
         self.setObjectName(style)
         sheet = STYLE_SHEET_CACHE.get(style)
@@ -953,16 +1072,42 @@ class MediaRadialItem(QFrame):
     def _show_style_menu(self):
         menu = QMenu(self)
         menu.setObjectName("mediaStyleMenu")
+        menu_font = menu.font()
+        menu_font.setPointSize(9)
+        menu.setFont(menu_font)
+        menu.setStyleSheet("""
+            QMenu#mediaStyleMenu {
+                background: rgba(255, 250, 252, 248);
+                border: 1px solid rgba(226, 162, 182, 95);
+                border-radius: 8px;
+                padding: 4px;
+                font-size: 10px;
+                color: rgba(58, 32, 42, 230);
+            }
+            QMenu#mediaStyleMenu::item {
+                min-height: 18px;
+                padding: 3px 18px 3px 18px;
+                border-radius: 5px;
+                background: transparent;
+            }
+            QMenu#mediaStyleMenu::item:selected {
+                background: rgba(236, 146, 172, 54);
+            }
+            QMenu#mediaStyleMenu::indicator {
+                width: 10px;
+                height: 10px;
+                left: 5px;
+            }
+        """)
         labels = {
-            "aurora": "Aurora 极光",
-            "neon": "Neon Pulse 霓虹",
-            "glass": "Frosted Glass 磨砂",
-            "velvet": "Velvet Night 丝绒",
-            "prism": "Prism 全息幻彩",
-            "blossom": "Blossom 花漾粉",
+            "sakura": "Sakura 桜",
+            "sky": "Sky 空",
             "matcha": "Matcha 抹茶绿",
+            "ink": "Ink 墨",
+            "sunset": "Sunset 夕",
+            "snow": "Snow 雪",
         }
-        for style in ("aurora", "neon", "glass", "velvet", "prism", "blossom", "matcha"):
+        for style in ("sakura", "sky", "matcha", "ink", "sunset", "snow"):
             action = menu.addAction(labels[style])
             action.setCheckable(True)
             action.setChecked(style == self._style)
@@ -980,25 +1125,28 @@ class MediaRadialItem(QFrame):
     def set_snapshot(self, snapshot):
         """Bind a MediaSessionSnapshot (or None for empty state)."""
         self._snapshot = snapshot
+        self._refresh_snapshot_labels()
+
+    def _set_elided_label(self, label: QLabel, text: str, tooltip: str = ""):
+        metrics = label.fontMetrics()
+        text_width = max(24, label.width() - 4)
+        label.setText(metrics.elidedText(str(text or ""), Qt.TextElideMode.ElideRight, text_width))
+        label.setToolTip(tooltip)
+
+    def _refresh_snapshot_labels(self):
+        snapshot = self._snapshot
         if snapshot is None:
-            self._app_label.setText("No media")
-            self._track_label.setText("No active playback")
-            self._track_label.setToolTip("")
-            self._play_btn.setIcon(_media_icon("play"))
+            self._set_elided_label(self._app_label, "No media")
+            self._set_elided_label(self._track_label, "No active playback")
+            self._play_btn.set_media_icon("play")
             return
         from media_session_manager import display_app_name, format_track_line
 
         app = display_app_name(snapshot.app_id)
         track = format_track_line(snapshot)
-        self._app_label.setText(app)
-        metrics = self._track_label.fontMetrics()
-        text_width = max(160, self._track_label.width() - 4)
-        elided = metrics.elidedText(track, Qt.TextElideMode.ElideRight, text_width)
-        self._track_label.setText(elided)
-        self._track_label.setToolTip(track)
-        self._play_btn.setIcon(
-            _media_icon("pause" if snapshot.playback_status == "playing" else "play")
-        )
+        self._set_elided_label(self._app_label, app, app)
+        self._set_elided_label(self._track_label, track, track)
+        self._play_btn.set_media_icon("pause" if snapshot.playback_status == "playing" else "play")
 
     # -- hover for acrylic styles --
 
@@ -1026,258 +1174,298 @@ class MediaRadialItem(QFrame):
         # ── shadow ──
         shadow_rect = panel_rect.adjusted(2, 8, -2, 10)
         painter.setPen(Qt.PenStyle.NoPen)
-        if style == "neon":
-            painter.setBrush(QColor(0, 180, 220, 32))
-        elif style == "velvet":
-            painter.setBrush(QColor(140, 100, 50, 22))
-        elif style == "glass":
-            painter.setBrush(QColor(0, 0, 0, 46))
+        if style == "matcha":
+            painter.setBrush(QColor(0, 0, 0, 12))
         else:
-            painter.setBrush(QColor(15, 23, 42, 52))
+            painter.setBrush(QColor(0, 0, 0, 18))
         painter.drawRoundedRect(shadow_rect, MEDIA_CARD_RADIUS, MEDIA_CARD_RADIUS)
 
         # ── background gradient (per style) ──
+        # ── background gradient + border ──
         bg = QLinearGradient(panel_rect.topLeft(), panel_rect.bottomRight())
-        if style == "aurora":
-            bg.setColorAt(0.0, QColor(26, 22, 40, 250))
-            bg.setColorAt(0.35, QColor(32, 26, 46, 250))
-            bg.setColorAt(0.65, QColor(36, 30, 50, 250))
-            bg.setColorAt(1.0, QColor(28, 26, 43, 250))
-            border = QColor(180, 160, 220, 64)
-        elif style == "neon":
-            bg.setColorAt(0.0, QColor(10, 18, 31, 250))
-            bg.setColorAt(0.5, QColor(12, 22, 38, 250))
-            bg.setColorAt(1.0, QColor(10, 17, 28, 250))
-            border = QColor(0, 210, 240, 89)
-        elif style == "glass":
-            bg.setColorAt(0.0, QColor(255, 255, 255, 20))
-            bg.setColorAt(1.0, QColor(255, 255, 255, 8))
-            border = QColor(255, 255, 255, 36)
-        elif style == "velvet":
-            bg.setColorAt(0.0, QColor(24, 20, 30, 250))
-            bg.setColorAt(0.3, QColor(26, 21, 34, 250))
-            bg.setColorAt(0.6, QColor(28, 22, 36, 250))
-            bg.setColorAt(1.0, QColor(23, 19, 29, 250))
-            border = QColor(180, 150, 100, 56)
-        elif style == "prism":
-            bg.setColorAt(0.0, QColor(18, 20, 29, 250))
-            bg.setColorAt(0.5, QColor(22, 24, 32, 250))
-            bg.setColorAt(1.0, QColor(18, 21, 28, 250))
-            border = QColor(180, 180, 200, 46)
-        elif style == "blossom":
+        if style == "sakura":
             bg.setColorAt(0.0, QColor(255, 245, 248, 250))
-            bg.setColorAt(0.35, QColor(255, 232, 240, 250))
-            bg.setColorAt(0.65, QColor(255, 240, 245, 250))
+            bg.setColorAt(0.45, QColor(255, 232, 240, 250))
+            bg.setColorAt(1.0, QColor(254, 242, 246, 250))
+            border = QColor(220, 150, 170, 77)
+        elif style == "sky":
+            bg.setColorAt(0.0, QColor(244, 249, 253, 250))
+            bg.setColorAt(0.45, QColor(232, 242, 250, 250))
+            bg.setColorAt(1.0, QColor(240, 247, 253, 250))
+            border = QColor(160, 200, 230, 77)
+        elif style == "matcha":
+            bg.setColorAt(0.0, QColor(250, 254, 251, 250))
+            bg.setColorAt(0.35, QColor(242, 252, 246, 250))
+            bg.setColorAt(0.65, QColor(246, 253, 249, 250))
+            bg.setColorAt(1.0, QColor(238, 249, 243, 250))
+            border = QColor(120, 200, 160, 64)
+        elif style == "ink":
+            bg.setColorAt(0.0, QColor(248, 246, 243, 250))
+            bg.setColorAt(0.35, QColor(240, 237, 232, 250))
+            bg.setColorAt(0.70, QColor(235, 231, 225, 250))
+            bg.setColorAt(1.0, QColor(242, 239, 235, 250))
+            border = QColor(90, 90, 100, 52)
+        elif style == "sunset":
+            bg.setColorAt(0.0, QColor(255, 238, 230, 250))
+            bg.setColorAt(0.30, QColor(255, 220, 205, 250))
+            bg.setColorAt(0.65, QColor(255, 228, 218, 250))
+            bg.setColorAt(1.0, QColor(254, 240, 235, 250))
+            border = QColor(220, 160, 130, 77)
+        elif style == "snow":
+            bg.setColorAt(0.0, QColor(251, 252, 253, 250))
+            bg.setColorAt(0.45, QColor(244, 247, 250, 250))
+            bg.setColorAt(1.0, QColor(249, 251, 253, 250))
+            border = QColor(180, 195, 210, 56)
+        else:
+            bg.setColorAt(0.0, QColor(255, 245, 248, 250))
             bg.setColorAt(1.0, QColor(252, 228, 236, 250))
             border = QColor(230, 120, 160, 77)
-        elif style == "matcha":
-            bg.setColorAt(0.0, QColor(246, 253, 249, 250))
-            bg.setColorAt(0.35, QColor(235, 250, 242, 250))
-            bg.setColorAt(0.65, QColor(242, 252, 246, 250))
-            bg.setColorAt(1.0, QColor(232, 246, 239, 250))
-            border = QColor(100, 190, 150, 71)
-        else:  # fallback (should not reach)
-            bg.setColorAt(0.0, QColor(18, 20, 29, 250))
-            bg.setColorAt(0.5, QColor(22, 24, 32, 250))
-            bg.setColorAt(1.0, QColor(18, 21, 28, 250))
-            border = QColor(180, 180, 200, 46)
 
         painter.setBrush(QBrush(bg))
         painter.setPen(QPen(border, 1.0))
         painter.drawRoundedRect(panel_rect, MEDIA_CARD_RADIUS, MEDIA_CARD_RADIUS)
 
-        # ── layered decorations (per style) ──
-        clip = QPainterPath()
-        clip.addRoundedRect(panel_rect, MEDIA_CARD_RADIUS, MEDIA_CARD_RADIUS)
+        # ── layered decorations (clipped to card shape) ──
+        deco_clip = QPainterPath()
+        deco_clip.addRoundedRect(panel_rect, MEDIA_CARD_RADIUS, MEDIA_CARD_RADIUS)
         painter.save()
-        painter.setClipPath(clip)
+        painter.setClipPath(deco_clip)
 
-        if style == "aurora":
-            # Vertical flowing bands — aurora borealis effect
-            painter.setPen(Qt.PenStyle.NoPen)
-            band_height = panel_rect.height()
-            # Bottom green band
-            green_band = QLinearGradient(panel_rect.topLeft(), panel_rect.bottomLeft())
-            green_band.setColorAt(0.0, QColor(80, 220, 160, 0))
-            green_band.setColorAt(0.65, QColor(80, 220, 160, 22))
-            green_band.setColorAt(0.82, QColor(80, 200, 140, 40))
-            green_band.setColorAt(1.0, QColor(60, 180, 120, 18))
-            painter.setBrush(QBrush(green_band))
-            painter.drawRect(panel_rect)
-            # Mid teal band (slightly tilted)
-            teal_band = QLinearGradient(panel_rect.topLeft() + QPointF(0, band_height * 0.30),
-                                        panel_rect.bottomLeft() - QPointF(0, band_height * 0.25))
-            teal_band.setColorAt(0.0, QColor(60, 210, 180, 0))
-            teal_band.setColorAt(0.34, QColor(60, 210, 180, 24))
-            teal_band.setColorAt(0.5, QColor(100, 230, 200, 36))
-            teal_band.setColorAt(0.66, QColor(60, 200, 170, 18))
-            teal_band.setColorAt(1.0, QColor(60, 200, 170, 0))
-            painter.setBrush(QBrush(teal_band))
-            painter.drawRect(panel_rect)
-            # Upper purple-pink band
-            purple_band = QLinearGradient(panel_rect.topLeft() + QPointF(0, band_height * 0.42),
-                                          panel_rect.bottomLeft() - QPointF(0, band_height * 0.38))
-            purple_band.setColorAt(0.0, QColor(160, 100, 220, 0))
-            purple_band.setColorAt(0.38, QColor(160, 100, 220, 18))
-            purple_band.setColorAt(0.5, QColor(200, 130, 240, 32))
-            purple_band.setColorAt(0.62, QColor(140, 90, 200, 14))
-            purple_band.setColorAt(1.0, QColor(140, 90, 200, 0))
-            painter.setBrush(QBrush(purple_band))
-            painter.drawRect(panel_rect)
-            # Faint upper green accent
-            accent_band = QLinearGradient(panel_rect.topLeft() + QPointF(0, band_height * 0.55),
-                                           panel_rect.bottomLeft() - QPointF(0, band_height * 0.28))
-            accent_band.setColorAt(0.0, QColor(80, 200, 140, 0))
-            accent_band.setColorAt(0.45, QColor(80, 200, 140, 12))
-            accent_band.setColorAt(0.55, QColor(120, 220, 170, 18))
-            accent_band.setColorAt(0.65, QColor(80, 200, 140, 0))
-            painter.setBrush(QBrush(accent_band))
-            painter.drawRect(panel_rect)
-            # Vertical streak mask overlay
-            streak = QLinearGradient(panel_rect.topLeft(), panel_rect.topRight())
-            streak.setColorAt(0.0, QColor(255, 255, 255, 0))
-            streak.setColorAt(0.08, QColor(255, 255, 255, 22))
-            streak.setColorAt(0.15, QColor(255, 255, 255, 35))
-            streak.setColorAt(0.22, QColor(255, 255, 255, 0))
-            streak.setColorAt(0.38, QColor(255, 255, 255, 0))
-            streak.setColorAt(0.44, QColor(255, 255, 255, 28))
-            streak.setColorAt(0.50, QColor(255, 255, 255, 40))
-            streak.setColorAt(0.56, QColor(255, 255, 255, 0))
-            streak.setColorAt(0.68, QColor(255, 255, 255, 0))
-            streak.setColorAt(0.74, QColor(255, 255, 255, 25))
-            streak.setColorAt(0.80, QColor(255, 255, 255, 32))
-            streak.setColorAt(0.86, QColor(255, 255, 255, 0))
-            streak.setColorAt(1.0, QColor(255, 255, 255, 0))
-            painter.setBrush(QBrush(streak))
-            painter.drawRect(panel_rect)
-            # Outer glow
-            outer_glow = QRadialGradient(panel_rect.right() - 20, panel_rect.top() + 30, 130)
-            outer_glow.setColorAt(0.0, QColor(60, 180, 140, 16))
-            outer_glow.setColorAt(1.0, QColor(60, 180, 140, 0))
-            painter.setBrush(QBrush(outer_glow))
-            painter.drawRect(panel_rect)
+        image_spec = _MEDIA_CARD_IMAGE_SPECS.get(style)
+        image_pixmap = _media_card_pixmap(style) if image_spec is not None else None
+        if image_spec is not None and image_pixmap is not None and not image_pixmap.isNull():
+            _play_filename, _pause_filename, source_rect, _pause_rect = image_spec
+            painter.drawPixmap(QRectF(panel_rect), image_pixmap, source_rect)
+            self._draw_image_text_scrim(painter, panel_rect, style)
+            self._draw_image_pause_patch(painter, panel_rect, style)
+            painter.restore()
+            if self._debug_overlay:
+                self._draw_debug_overlay(painter)
+            return
 
-        elif style == "neon":
-            # Grid lines
-            grid_size = 16
-            painter.setPen(QPen(QColor(0, 230, 255, 28), 1))
-            x = panel_rect.left()
-            while x < panel_rect.right():
-                painter.drawLine(int(x), panel_rect.top(), int(x), panel_rect.bottom())
-                x += grid_size
-            painter.setPen(QPen(QColor(0, 230, 255, 18), 1))
-            y = panel_rect.top()
-            while y < panel_rect.bottom():
-                painter.drawLine(panel_rect.left(), int(y), panel_rect.right(), int(y))
-                y += grid_size
-            # Scan line
-            scan_y = panel_rect.top() + panel_rect.height() * 0.48
-            scan = QLinearGradient(panel_rect.left(), scan_y, panel_rect.right(), scan_y + 6)
-            scan.setColorAt(0.0, QColor(0, 220, 255, 0))
-            scan.setColorAt(0.15, QColor(0, 220, 255, 128))
-            scan.setColorAt(0.5, QColor(255, 50, 150, 102))
-            scan.setColorAt(0.85, QColor(0, 220, 255, 128))
-            scan.setColorAt(1.0, QColor(0, 220, 255, 0))
-            painter.setPen(QPen(QBrush(scan), 1.5))
-            painter.drawLine(panel_rect.left() - 30, int(scan_y + 12), panel_rect.right() + 30, int(scan_y - 10))
-            # Neon glow
-            glow = QRadialGradient(panel_rect.right(), panel_rect.top() + 40, 80)
-            glow.setColorAt(0.0, QColor(0, 200, 230, 14))
-            glow.setColorAt(1.0, QColor(0, 200, 230, 0))
-            painter.setBrush(QBrush(glow))
-            painter.drawRect(panel_rect)
+        if style == "sakura":
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
-        elif style == "glass":
-            # Inner border highlight
-            inner = panel_rect.adjusted(5, 5, -5, -5)
-            painter.setPen(QPen(QColor(255, 255, 255, 16), 1))
+            content_rect = self._sakura_content_rect(panel_rect)
+
+            panel_fill = QLinearGradient(content_rect.topLeft(), content_rect.bottomRight())
+            panel_fill.setColorAt(0.0, QColor(255, 253, 254, 178))
+            panel_fill.setColorAt(0.55, QColor(255, 246, 249, 158))
+            panel_fill.setColorAt(1.0, QColor(255, 238, 244, 148))
+            painter.setPen(QPen(QColor(228, 170, 185, 118), 1.15))
+            painter.setBrush(QBrush(panel_fill))
+            painter.drawRoundedRect(content_rect, 18, 18)
+            painter.setPen(QPen(QColor(255, 255, 255, 135), 1.0))
             painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawRoundedRect(inner, MEDIA_CARD_RADIUS - 4, MEDIA_CARD_RADIUS - 4)
-            # Top-left highlight
-            highlight = QLinearGradient(panel_rect.topLeft(), panel_rect.center())
-            highlight.setColorAt(0.0, QColor(255, 255, 255, 22))
-            highlight.setColorAt(1.0, QColor(255, 255, 255, 0))
-            painter.setBrush(QBrush(highlight))
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawRoundedRect(panel_rect, MEDIA_CARD_RADIUS, MEDIA_CARD_RADIUS)
+            painter.drawRoundedRect(content_rect.adjusted(1.5, 1.5, -1.5, -1.5), 16, 16)
 
-        elif style == "velvet":
-            # Inner gold border
-            inner = panel_rect.adjusted(7, 7, -7, -7)
-            painter.setPen(QPen(QColor(190, 155, 105, 26), 1))
+            menu_w = 30
+            menu_h = 23
+            menu_rect = QRectF(
+                content_rect.right() - 35,
+                content_rect.top() + 8,
+                menu_w,
+                menu_h,
+            )
+            painter.setPen(Qt.PenStyle.NoPen)
+            menu_fill = QLinearGradient(menu_rect.topLeft(), menu_rect.bottomLeft())
+            menu_fill.setColorAt(0.0, QColor(255, 247, 250, 170))
+            menu_fill.setColorAt(1.0, QColor(240, 198, 211, 125))
+            painter.setBrush(QBrush(menu_fill))
+            painter.drawRoundedRect(menu_rect, 11.5, 11.5)
+            painter.setPen(QPen(QColor(226, 162, 182, 82), 1.0))
             painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawRoundedRect(inner, MEDIA_CARD_RADIUS - 4, MEDIA_CARD_RADIUS - 4)
-            # Warm glow orb
+            painter.drawRoundedRect(menu_rect.adjusted(0.5, 0.5, -0.5, -0.5), 11, 11)
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(180, 140, 90, 16))
-            painter.drawEllipse(panel_rect.right() - 42, panel_rect.top() + 4, 36, 36)
-            painter.setBrush(QColor(160, 100, 60, 12))
-            painter.drawEllipse(panel_rect.left() + 14, panel_rect.bottom() - 52, 50, 50)
+            painter.setBrush(QBrush(QColor(132, 92, 104, 165)))
+            dot_y = menu_rect.center().y()
+            for dot_x in (menu_rect.center().x() - 6, menu_rect.center().x(), menu_rect.center().x() + 6):
+                painter.drawEllipse(QRectF(dot_x - 1.35, dot_y - 1.35, 2.7, 2.7))
 
-        elif style == "prism":
-            # Diagonal iridescent sheen
-            sheen = QLinearGradient(panel_rect.topLeft() - QPointF(20, 20), panel_rect.bottomRight() + QPointF(20, 20))
-            sheen.setColorAt(0.0, QColor(120, 140, 255, 0))
-            sheen.setColorAt(0.25, QColor(140, 220, 255, 16))
-            sheen.setColorAt(0.5, QColor(255, 160, 200, 10))
-            sheen.setColorAt(0.75, QColor(160, 200, 255, 14))
-            sheen.setColorAt(1.0, QColor(120, 140, 255, 0))
+            def draw_sakura_flower(cx: float, cy: float, scale: float = 1.0,
+                                   fill_alpha: int = 150, outline_alpha: int = 180):
+                petal_fill = QColor(246, 178, 196, fill_alpha)
+                petal_line = QColor(220, 128, 156, outline_alpha)
+                center_fill = QColor(232, 108, 145, min(200, fill_alpha + 20))
+
+                painter.save()
+                painter.translate(cx, cy)
+
+                painter.setPen(QPen(petal_line, 1))
+                painter.setBrush(QBrush(petal_fill))
+                for ang in (0, 72, 144, 216, 288):
+                    painter.save()
+                    painter.rotate(ang)
+                    painter.drawEllipse(QRectF(-7 * scale, -18 * scale, 14 * scale, 24 * scale))
+                    painter.restore()
+
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QBrush(center_fill))
+                painter.drawEllipse(QRectF(-3 * scale, -3 * scale, 6 * scale, 6 * scale))
+                painter.restore()
+
+            deco_left = panel_rect.left() + 18
+            deco_top = panel_rect.top() + 8
+
+            branch_pen = QPen(
+                QColor(154, 104, 112, 130),
+                4.0,
+                Qt.PenStyle.SolidLine,
+                Qt.PenCapStyle.RoundCap,
+                Qt.PenJoinStyle.RoundJoin,
+            )
+            painter.setPen(branch_pen)
+            painter.drawLine(QPointF(deco_left + 6, deco_top + 14), QPointF(deco_left + 54, deco_top + 20))
+            painter.drawLine(QPointF(deco_left + 54, deco_top + 20), QPointF(deco_left + 82, deco_top + 10))
+            painter.drawLine(QPointF(deco_left + 40, deco_top + 18), QPointF(deco_left + 26, deco_top + 34))
+
+            draw_sakura_flower(deco_left + 22, deco_top + 16, 0.55, 135, 165)
+            draw_sakura_flower(deco_left + 44, deco_top + 24, 0.50, 130, 160)
+            draw_sakura_flower(deco_left + 66, deco_top + 12, 0.52, 132, 162)
+            draw_sakura_flower(deco_left + 28, deco_top + 36, 0.46, 120, 150)
+
+            furin_cx = deco_left + 58
+            furin_top = deco_top + 12
+
+            painter.setPen(QPen(QColor(225, 120, 150, 170), 1.8))
+            painter.drawLine(QPointF(furin_cx, furin_top), QPointF(furin_cx, furin_top + 14))
+
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QBrush(sheen))
-            painter.drawRect(panel_rect)
-            # Top-right prism highlight
-            prism_glow = QRadialGradient(panel_rect.right() - 30, panel_rect.top() + 20, 60)
-            prism_glow.setColorAt(0.0, QColor(140, 200, 255, 14))
-            prism_glow.setColorAt(1.0, QColor(140, 200, 255, 0))
-            painter.setBrush(QBrush(prism_glow))
-            painter.drawRect(panel_rect)
+            painter.setBrush(QBrush(QColor(236, 146, 172, 170)))
+            painter.drawEllipse(QRectF(furin_cx - 2.5, furin_top + 12, 5, 5))
 
-        elif style == "blossom":
-            # Warm pink glow orbs
+            glass_x = furin_cx - 17
+            glass_y = furin_top + 16
+            glass_w = 34
+            glass_h = 24
+            painter.setPen(QPen(QColor(233, 136, 164, 185), 1.8))
+            painter.setBrush(QBrush(QColor(255, 240, 245, 85)))
+
+            bell_path = QPainterPath()
+            bell_path.moveTo(glass_x + 5, glass_y + glass_h - 6)
+            bell_path.quadTo(glass_x + 2, glass_y + 6, furin_cx, glass_y + 1)
+            bell_path.quadTo(
+                glass_x + glass_w - 2,
+                glass_y + 6,
+                glass_x + glass_w - 5,
+                glass_y + glass_h - 6,
+            )
+            zx = glass_x + glass_w - 5
+            zy = glass_y + glass_h - 6
+            bell_path.lineTo(zx - 4, zy + 3)
+            bell_path.lineTo(zx - 8, zy)
+            bell_path.lineTo(zx - 12, zy + 3)
+            bell_path.lineTo(zx - 16, zy)
+            bell_path.lineTo(zx - 20, zy + 3)
+            bell_path.lineTo(zx - 24, zy)
+            bell_path.lineTo(glass_x + 5, zy)
+            bell_path.closeSubpath()
+            painter.drawPath(bell_path)
+
+            painter.setPen(QPen(QColor(255, 255, 255, 145), 1.5))
+            painter.drawLine(QPointF(glass_x + 8, glass_y + 7), QPointF(glass_x + 13, glass_y + 3))
+
+            painter.setPen(QPen(QColor(228, 132, 160, 175), 1.4))
+            painter.drawLine(QPointF(furin_cx, glass_y + 10), QPointF(furin_cx, glass_y + glass_h + 4))
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(255, 200, 220, 55))
-            painter.drawEllipse(panel_rect.right() - 36, panel_rect.top() - 4, 38, 38)
-            painter.setBrush(QColor(255, 180, 200, 35))
-            painter.drawEllipse(panel_rect.left() + 10, panel_rect.bottom() - 48, 48, 48)
-            # Soft warm glow
-            glow = QRadialGradient(panel_rect.center().x(), panel_rect.top() + 30, 110)
-            glow.setColorAt(0.0, QColor(255, 255, 255, 25))
-            glow.setColorAt(1.0, QColor(255, 255, 255, 0))
-            painter.setBrush(QBrush(glow))
-            painter.drawRect(panel_rect)
-            # Top highlight
-            top_hl = QLinearGradient(panel_rect.topLeft(), panel_rect.center())
-            top_hl.setColorAt(0.0, QColor(255, 255, 255, 30))
-            top_hl.setColorAt(1.0, QColor(255, 255, 255, 0))
-            painter.setBrush(QBrush(top_hl))
-            painter.drawRoundedRect(panel_rect, MEDIA_CARD_RADIUS, MEDIA_CARD_RADIUS)
+            painter.setBrush(QBrush(QColor(237, 152, 176, 175)))
+            painter.drawEllipse(QRectF(furin_cx - 2.2, glass_y + glass_h + 2, 4.4, 4.4))
 
+            draw_sakura_flower(furin_cx, glass_y + 11, 0.42, 150, 175)
+
+            paper_top = glass_y + glass_h + 6
+            painter.setPen(QPen(QColor(230, 138, 165, 165), 1.2))
+            painter.drawLine(QPointF(furin_cx, glass_y + glass_h + 6), QPointF(furin_cx - 2, paper_top + 4))
+
+            painter.save()
+            painter.translate(furin_cx - 5, paper_top + 6)
+            painter.rotate(6)
+            painter.setPen(QPen(QColor(230, 138, 165, 150), 1.0))
+            painter.setBrush(QBrush(QColor(255, 236, 242, 125)))
+            painter.drawRect(QRectF(0, 0, 12, 24))
+            painter.setPen(QPen(QColor(228, 164, 180, 120), 1.0))
+            painter.drawLine(QPointF(2, 17), QPointF(10, 17))
+            painter.drawLine(QPointF(3, 20), QPointF(9, 20))
+            painter.restore()
+            draw_sakura_flower(furin_cx + 1, paper_top + 18, 0.22, 135, 160)
+
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor(243, 178, 194, 130)))
+            for px, py, pw, ph in (
+                (deco_left + 78, deco_top + 16, 8, 12),
+                (deco_left + 93, deco_top + 38, 8, 12),
+                (deco_left + 80, deco_top + 64, 8, 12),
+                (deco_left + 103, deco_top + 54, 8, 12),
+            ):
+                painter.save()
+                painter.translate(px, py)
+                painter.rotate(-28)
+                painter.drawEllipse(QRectF(-pw / 2, -ph / 2, pw, ph))
+                painter.restore()
+
+            draw_sakura_flower(deco_left + 16, panel_rect.bottom() - 22, 0.58, 125, 160)
+
+            painter.restore()
+        elif style == "sky":
+            painter.setPen(Qt.PenStyle.NoPen)
+            r, t = panel_rect.right(), panel_rect.top()
+            painter.setBrush(QBrush(QColor(255, 180, 60, 180)))
+            painter.drawEllipse(r - 64, t - 6, 56, 56)
+            painter.setBrush(QBrush(QColor(140, 180, 210, 180)))
+            painter.setPen(QPen(QColor(120, 160, 195, 150), 1.0))
+            painter.drawRoundedRect(QRectF(r - 90, t + 55, 85, 18), 9, 9)
         elif style == "matcha":
-            # Mint green glow orbs
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(160, 230, 200, 40))
+            painter.setBrush(QColor(140, 210, 180, 90))
             painter.drawEllipse(panel_rect.right() - 34, panel_rect.top() - 2, 34, 34)
-            painter.setBrush(QColor(140, 210, 180, 30))
+            painter.setBrush(QColor(120, 190, 160, 70))
             painter.drawEllipse(panel_rect.left() + 14, panel_rect.bottom() - 42, 42, 42)
-            # Fresh glow
-            glow = QRadialGradient(panel_rect.center().x(), panel_rect.top() + 20, 100)
-            glow.setColorAt(0.0, QColor(255, 255, 255, 20))
-            glow.setColorAt(1.0, QColor(255, 255, 255, 0))
-            painter.setBrush(QBrush(glow))
-            painter.drawRect(panel_rect)
-            # Top highlight
-            top_hl = QLinearGradient(panel_rect.topLeft(), panel_rect.center())
-            top_hl.setColorAt(0.0, QColor(255, 255, 255, 28))
-            top_hl.setColorAt(1.0, QColor(255, 255, 255, 0))
-            painter.setBrush(QBrush(top_hl))
-            painter.drawRoundedRect(panel_rect, MEDIA_CARD_RADIUS, MEDIA_CARD_RADIUS)
+            painter.setBrush(QColor(100, 180, 150, 55))
+            painter.drawEllipse(panel_rect.left() + 60, panel_rect.top() + 50, 28, 28)
+        elif style == "ink":
+            r, t, b = panel_rect.right(), panel_rect.top(), panel_rect.bottom()
+            # Mountain silhouette using drawPolygon
+            painter.setBrush(QBrush(QColor(45, 40, 35, 180)))
+            pts1 = QPolygon([
+                QPoint(r - 100, b), QPoint(r - 90, b - 22), QPoint(r - 55, b - 35),
+                QPoint(r - 30, b - 28), QPoint(r - 5, b - 50),
+                QPoint(r + 5, b + 5), QPoint(r - 100, b + 5),
+            ])
+            painter.drawPolygon(pts1)
+            # Lighter mountain behind
+            painter.setBrush(QBrush(QColor(55, 50, 45, 120)))
+            pts2 = QPolygon([
+                QPoint(r - 125, b), QPoint(r - 80, b - 30), QPoint(r - 30, b - 15),
+                QPoint(r - 10, b - 10), QPoint(r + 5, b + 5), QPoint(r - 125, b + 5),
+            ])
+            painter.drawPolygon(pts2)
+            # Ink splash dots
+            painter.setBrush(QBrush(QColor(45, 40, 35, 200)))
+            dots = [(70, 16, 7), (95, 30, 5), (52, 45, 6), (110, 48, 5), (78, 60, 6), (100, 12, 4)]
+            for dx, dy, d in dots:
+                painter.drawEllipse(r - dx - d // 2, t + dy - d // 2, d, d)
+        elif style == "sunset":
+            painter.setPen(Qt.PenStyle.NoPen)
+            r, t, l = panel_rect.right(), panel_rect.top(), panel_rect.left()
+            painter.setBrush(QBrush(QColor(255, 140, 60, 180)))
+            painter.drawEllipse(r - 78, t - 8, 72, 72)
+            painter.setPen(QPen(QColor(200, 130, 90, 150), 1.5))
+            painter.drawLine(QPoint(l + 20, t + 54), QPoint(r - 20, t + 54))
+        elif style == "snow":
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor(140, 165, 195, 150)))
+            snowflakes = [(50, 18, 5), (72, 40, 4), (30, 55, 6), (58, 75, 5), (90, 10, 4), (80, 60, 5), (42, 82, 4), (96, 45, 5)]
+            for sx, sy, sr in snowflakes:
+                painter.drawRoundedRect(QRectF(panel_rect.right() - sx, panel_rect.top() + sy, sr, sr), 1, 1)
 
         painter.restore()
-
+        if style != "sakura":
+            self._draw_style_menu_button_chrome(painter)
         # ── top edge highlight (all styles) ──
         highlight_rect = panel_rect.adjusted(10, 7, -10, -panel_rect.height() + 16)
         painter.setPen(Qt.PenStyle.NoPen)
-        hl_alpha = 22 if style == "aurora" else 22 if style == "neon" else 30 if style == "glass" else 18 if style == "velvet" else 20 if style == "prism" else 36 if style == "blossom" else 32
+        hl_alpha = 32 if style == "matcha" else 22
         painter.setBrush(QColor(255, 255, 255, hl_alpha))
         painter.drawRoundedRect(highlight_rect, 5, 5)
 
@@ -1300,21 +1488,20 @@ class MediaRadialItem(QFrame):
 STYLE_SHEET_CACHE: dict[str, str] = {}
 
 _STYLE_FUNCTIONS = {
-    "aurora": _media_style_aurora,
-    "neon": _media_style_neon,
-    "glass": _media_style_glass,
-    "velvet": _media_style_velvet,
-    "prism": _media_style_prism,
-    "blossom": _media_style_blossom,
+    "sakura": _media_style_sakura,
+    "sky": _media_style_sky,
     "matcha": _media_style_matcha,
+    "ink": _media_style_ink,
+    "sunset": _media_style_sunset,
+    "snow": _media_style_snow,
 }
 
 
 def _build_media_style_sheet(style: str) -> str:
     func = _STYLE_FUNCTIONS.get(style)
     if func is None:
-        return _media_style_aurora()
-    return func()
+        return _media_style_sakura() + _MEDIA_STYLE_MENU_BUTTON_QSS
+    return func() + _MEDIA_STYLE_MENU_BUTTON_QSS
 
 
 @dataclass
@@ -1394,38 +1581,80 @@ class RadialListRow(QWidget):
         self._subtitle = subtitle
         self.update()
 
+    def _is_dark_system(self) -> bool:
+        # darkdetect.isDark() hits the Windows registry; paintEvent runs per
+        # animation frame for every row, so cache the answer for ~1s.
+        global _DARK_SYSTEM_CACHE
+        now = time.monotonic()
+        cached = _DARK_SYSTEM_CACHE
+        if cached is not None and now - cached[1] < 1.0:
+            return cached[0]
+        try:
+            import darkdetect
+            result = bool(darkdetect.isDark())
+        except Exception:
+            result = True  # default to dark if detection fails
+        _DARK_SYSTEM_CACHE = (result, now)
+        return result
+
     def paintEvent(self, event):
         p = QPainter(self)
         try:
             p.setRenderHint(QPainter.RenderHint.Antialiasing)
             w, h = self.width(), self.height()
+            dark = self._is_dark_system()
 
-            alpha = 18 if not self._hover else 30
-            bg = QColor(self._color)
-            bg.setAlpha(alpha)
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QBrush(bg))
-            p.drawRoundedRect(QRectF(6, 2, w - 12, h - 4), 8, 8)
+            if dark:
+                # Dark theme: dark card + light icons + light text
+                bg = QColor(20, 20, 30, 35 if not self._hover else 50)
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QBrush(bg))
+                p.drawRoundedRect(QRectF(6, 2, w - 12, h - 4), 8, 8)
 
-            # Left color strip
-            strip = QColor(self._color)
-            strip.setAlpha(140)
-            p.setBrush(QBrush(strip))
-            p.drawRoundedRect(QRectF(6, 6, 3, h - 12), 1.5, 1.5)
+                strip = QColor(self._color)
+                strip.setAlpha(200)
+                p.setBrush(QBrush(strip))
+                p.drawRoundedRect(QRectF(6, 6, 3, h - 12), 1.5, 1.5)
+
+                icon_bg = QColor(self._color)
+                icon_bg.setAlpha(50 if not self._hover else 70)
+                p.setBrush(QBrush(icon_bg))
+                p.setPen(Qt.PenStyle.NoPen)
+
+                icon_stroke = QColor(255, 255, 255, 210 if not self._hover else 245)
+                title_color = QColor(245, 245, 255, 225 if not self._hover else 250)
+                sub_color = QColor(180, 180, 200, 170 if not self._hover else 210)
+            else:
+                # Light theme: white card + colored icons + dark text
+                bg = QColor(255, 255, 255, 200 if not self._hover else 230)
+                p.setPen(QPen(QColor(0, 0, 0, 12), 0.5))
+                p.setBrush(QBrush(bg))
+                p.drawRoundedRect(QRectF(6, 2, w - 12, h - 4), 8, 8)
+
+                strip = QColor(self._color)
+                strip.setAlpha(180)
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QBrush(strip))
+                p.drawRoundedRect(QRectF(6, 6, 3, h - 12), 1.5, 1.5)
+
+                icon_bg = QColor(self._color)
+                icon_bg.setAlpha(35 if not self._hover else 55)
+                p.setBrush(QBrush(icon_bg))
+                p.setPen(Qt.PenStyle.NoPen)
+
+                icon_stroke = QColor(self._color)
+                icon_stroke.setAlpha(210 if not self._hover else 240)
+                title_color = QColor(30, 30, 50, 220 if not self._hover else 245)
+                sub_color = QColor(90, 90, 115, 150 if not self._hover else 190)
 
             # Icon area
             icon_x, icon_y = 18, (h - 28) // 2
             icon_rect = QRectF(icon_x, icon_y, 28, 28)
-            icon_bg = QColor(self._color)
-            icon_bg.setAlpha(35 if not self._hover else 55)
-            p.setBrush(QBrush(icon_bg))
-            p.setPen(Qt.PenStyle.NoPen)
             p.drawRoundedRect(icon_rect, 7, 7)
 
             # Line icon
             if self._icon_kind in self._ICON_DRAWERS:
-                ico = QColor(255, 255, 255, 200 if not self._hover else 240)
-                pen = QPen(ico, 1.4)
+                pen = QPen(icon_stroke, 1.4)
                 pen.setCapStyle(Qt.PenCapStyle.RoundCap)
                 pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
                 p.setPen(pen)
@@ -1433,7 +1662,7 @@ class RadialListRow(QWidget):
                 method = getattr(self, "_draw_" + self._icon_kind + "_icon", None)
                 if method:
                     try:
-                        method(p, icon_x + 3, icon_y + 3, 22, 22, ico)
+                        method(p, icon_x + 3, icon_y + 3, 22, 22, icon_stroke)
                     except Exception:
                         pass
 
@@ -1443,7 +1672,6 @@ class RadialListRow(QWidget):
             font.setPointSize(10)
             font.setBold(True)
             p.setFont(font)
-            title_color = QColor(255, 255, 255, 215 if not self._hover else 245)
             p.setPen(title_color)
             p.drawText(QRectF(text_x, 5, w - text_x - 12, 20),
                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom, self._label)
@@ -1453,7 +1681,7 @@ class RadialListRow(QWidget):
                 font.setPointSize(8)
                 font.setBold(False)
                 p.setFont(font)
-                sub_color = QColor(180, 180, 195, 160 if not self._hover else 200)
+                p.setPen(sub_color)
                 p.setPen(sub_color)
                 p.drawText(QRectF(text_x, 24, w - text_x - 12, 16),
                            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, self._subtitle)
@@ -1770,7 +1998,7 @@ class RadialMenu(QWidget):
             opacity_effect=opacity,
         ))
 
-    def add_media_item(self, style: str = "aurora") -> MediaRadialItem:
+    def add_media_item(self, style: str = "sakura") -> MediaRadialItem:
         """Add a media control card at the leftmost position of the radial menu."""
         w = MediaRadialItem(style=style, parent=self)
         w.command_requested.connect(self._on_item_clicked)

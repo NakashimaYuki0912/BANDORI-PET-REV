@@ -3,6 +3,7 @@ import os
 import sys
 
 from process_utils import app_base_dir, ipc_server_name
+from fluent_bootstrap import apply_qt_font_fallback
 
 from PySide6.QtCore import QRect, Qt
 from PySide6.QtNetwork import QLocalSocket
@@ -34,6 +35,7 @@ def main():
     set_language(lang)
 
     app = QApplication(sys.argv)
+    apply_qt_font_fallback(app)
 
     if sys.platform == "darwin":
         import macos_patch

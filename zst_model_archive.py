@@ -10,14 +10,27 @@ VIRTUAL_SEP = "::"
 INDEX_MEMBER = ".bandori_zst_index.json"
 _VIRTUAL_BYTE_CACHE: dict[str, bytes] = {}
 _CACHE_LOCK = threading.RLock()
+# Path.resolve() is a syscall chain; archive paths are stable for the process
+# lifetime and make_virtual_path runs once per member per load (including
+# cache hits), so memoize the resolution.
+_RESOLVED_ARCHIVE_CACHE: dict[str, str] = {}
 
 
 def is_virtual_path(path: str) -> bool:
     return VIRTUAL_SEP in str(path)
 
 
+def _resolve_archive_path(archive_path: Path | str) -> str:
+    key = str(archive_path)
+    resolved = _RESOLVED_ARCHIVE_CACHE.get(key)
+    if resolved is None:
+        resolved = str(Path(key).resolve())
+        _RESOLVED_ARCHIVE_CACHE[key] = resolved
+    return resolved
+
+
 def make_virtual_path(archive_path: Path | str, member_path: str) -> str:
-    return f"{Path(archive_path).resolve()}{VIRTUAL_SEP}{_normalize_member(member_path)}"
+    return f"{_resolve_archive_path(archive_path)}{VIRTUAL_SEP}{_normalize_member(member_path)}"
 
 
 def split_virtual_path(path: str) -> tuple[str, str]:
@@ -121,6 +134,18 @@ def _model_resource_members(model_member: str, model_json: dict, include_express
     add(model_json.get("physics"))
     add(model_json.get("pose"))
 
+    # Motion files (.mtn, small text) are fetched through load_virtual_bytes
+    # during/after model load; without prefetch each miss costs a FULL archive
+    # decompression pass. Including them here adds them to the same single
+    # streaming pass at effectively zero extra cost.
+    motions = model_json.get("motions", {}) or {}
+    if isinstance(motions, dict):
+        for group in motions.values():
+            if isinstance(group, list):
+                for motion in group:
+                    if isinstance(motion, dict):
+                        add(motion.get("file"))
+
     expressions = model_json.get("expressions", []) or []
     if include_expressions and isinstance(expressions, list):
         for expression in expressions:
@@ -138,16 +163,18 @@ def _join_member(base_dir: str, path: str) -> str:
 
 
 def list_archive_files(archive_path: Path | str) -> list[str]:
-    archive_path = Path(archive_path).resolve()
+    archive_path = Path(_resolve_archive_path(archive_path))
     cache_path = archive_path.with_suffix(".zst.cache.json")
-    mtime = archive_path.stat().st_mtime if archive_path.exists() else 0
-    if cache_path.exists():
-        try:
-            cache = json.loads(cache_path.read_text(encoding="utf-8"))
-            if cache.get("mtime") == mtime and isinstance(cache.get("files"), list):
-                return cache["files"]
-        except (json.JSONDecodeError, KeyError, OSError):
-            pass
+    try:
+        mtime = archive_path.stat().st_mtime
+    except OSError:
+        mtime = 0
+    try:
+        cache = json.loads(cache_path.read_text(encoding="utf-8"))
+        if cache.get("mtime") == mtime and isinstance(cache.get("files"), list):
+            return cache["files"]
+    except (json.JSONDecodeError, KeyError, OSError):
+        pass
 
     files = []
     with _open_tar_zst(str(archive_path)) as archive:

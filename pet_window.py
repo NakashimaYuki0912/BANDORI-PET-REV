@@ -11,7 +11,7 @@ if os.name == "nt":
     import ctypes.wintypes
 
 from PySide6.QtCore import Qt, QPoint, QSize, QTimer, QPropertyAnimation, QEasingCurve, QProcess, QEvent, QThread, Signal
-from PySide6.QtGui import QColor, QIcon, QCursor, QGuiApplication, QMoveEvent, QResizeEvent, QPainter, QPen, QBrush, QFont, QFontMetrics, QLinearGradient
+from PySide6.QtGui import QColor, QIcon, QCursor, QGuiApplication, QMoveEvent, QResizeEvent, QPainter, QPen, QBrush, QFont, QFontMetrics, QLinearGradient, QPolygon
 from PySide6.QtNetwork import QLocalSocket
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QApplication, QSystemTrayIcon, QMenu, QStackedLayout,
@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 
 from app_theme import apply_app_theme
 from compact_ai_window import CompactAIWindow
+from daily_chat import complete_daily_chat_entries
 from i18n_manager import tr as _tr, set_language
 from live2d_click_actions import (
     CLICK_MOTION_NONE,
@@ -33,6 +34,7 @@ from model_manager import ModelManager
 from pixel_pet_widget import PixelPetWidget, load_pixel_frames, pixel_path_for_character
 from process_utils import app_base_dir, ipc_server_name, process_program_and_args
 from radial_menu import RadialMenu, MediaRadialItem
+from tray_menu_style import apply_compact_tray_menu_style
 from media_session_manager import (
     display_app_name,
     format_track_line,
@@ -60,6 +62,7 @@ except ImportError:
     pass
 
 from win32_constants import (
+    DWMWA_EXTENDED_FRAME_BOUNDS,
     DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND,
     HTCLIENT, HTTRANSPARENT, GWL_EXSTYLE, HWND_TOPMOST,
     WM_NCCALCSIZE, WM_NCHITTEST,
@@ -71,6 +74,41 @@ if sys.platform == "darwin":
     import macos_patch
 else:
     macos_patch = None
+
+# Chat action tag aliases (hoisted from _on_chat_action: rebuilt per IPC
+# message before; constant contents, so build it once at import).
+_CHAT_ACTION_TAG_MAP = {
+    "angry": "angry",
+    "cry": "cry",
+    "bye": "bye",
+    "kandou": "kandou",
+    "smile": "smile",
+    "sad": "sad",
+    "surprised": "surprised",
+    "thinking": "thinking",
+    "shame": "shame",
+    "serious": "serious",
+    "wink": "wink",
+    "kime": "kime",
+    "nf": "nf",
+    "nnf": "nnf",
+    "scared": "scared",
+    "sleep": "sleep",
+    "sneeze": "sneeze",
+    "sing": "sing",
+    "sigh": "sigh",
+    "odoodo": "odoodo",
+    "eeto": "eeto",
+    "gattsu": "gattsu",
+    "jaan": "jaan",
+    "nekodere": "nekodere",
+    "pui": "pui",
+    "niya": "niya",
+    "ando": "ando",
+    "mitore": "mitore",
+    "nod": "nod",
+    "f": "f",
+}
 
 if os.name == "nt":
     _user32 = ctypes.windll.user32
@@ -119,6 +157,14 @@ if os.name == "nt":
         ctypes.wintypes.DWORD,
     ]
     _dwm_set_window_attribute.restype = ctypes.c_long
+    _dwm_get_window_attribute = _dwmapi.DwmGetWindowAttribute
+    _dwm_get_window_attribute.argtypes = [
+        ctypes.wintypes.HWND,
+        ctypes.wintypes.DWORD,
+        ctypes.c_void_p,
+        ctypes.wintypes.DWORD,
+    ]
+    _dwm_get_window_attribute.restype = ctypes.c_long
 
     _shell32 = ctypes.windll.shell32
     _shell32.SHAppBarMessage.restype = ctypes.wintypes.UINT
@@ -145,6 +191,7 @@ else:
     _set_window_long = None
     _set_window_pos = None
     _dwm_set_window_attribute = None
+    _dwm_get_window_attribute = None
     _shell32 = None
     _ABM_GETTASKBARPOS = 0
     _ABE_BOTTOM = 3
@@ -356,7 +403,6 @@ class SpeechBubble(QWidget):
 
         # 尾巴尖位置跟随锚点偏移，而非固定 w//2
         cx = self._tail_x
-        from PySide6.QtGui import QPolygon
         tail = QPolygon([
             QPoint(cx - 8, body_h - 1),
             QPoint(cx + 8, body_h - 1),
@@ -697,9 +743,26 @@ class PetWindow(QWidget):
         self._cached_taskbar_full_top: int | None = None
         self._cached_taskbar_hwnd: int = 0
         self._taskbar_pos_anim: QPropertyAnimation | None = None
+        # Follow state (direct-lock to live tray top; see taskbar_trace analysis).
+        self._taskbar_smooth_top: float | None = None  # mirrors real_top when locked
+        self._taskbar_smooth_last_t: float | None = None
+        self._taskbar_glide_t0: float | None = None  # unused (kept for trace columns)
+        self._taskbar_glide_from: float = 0.0
+        self._taskbar_glide_to: float = 0.0
+        self._taskbar_glide_dur: float = 0.0
+        # Motion trace: BANDORI_TASKBAR_TRACE=1 or touch `.taskbar_trace` in app dir.
+        self._taskbar_trace_fp = None
+        self._taskbar_trace_enabled: bool | None = None  # lazy resolve
+        self._taskbar_trace_env_parsed = False
+        self._taskbar_trace_env_override: bool | None = None
+        self._taskbar_trace_flag_cache = False
+        self._taskbar_trace_flag_checked_at = -10.0
+        self._taskbar_trace_last: dict | None = None
+        self._taskbar_trace_active_until: float = 0.0
         self._taskbar_follow_timer = QTimer(self)
         self._taskbar_follow_timer.setTimerType(Qt.TimerType.PreciseTimer)
-        self._taskbar_follow_timer.setInterval(150)
+        # Direct-lock poll: idle when not snapped; active while snapped.
+        self._taskbar_follow_timer.setInterval(200)
         self._taskbar_follow_timer.timeout.connect(self._follow_taskbar)
         self._taskbar_follow_timer.start()
         self._live2d_visibility_guard_timer = QTimer(self)
@@ -1104,8 +1167,18 @@ class PetWindow(QWidget):
             self.resize(expected_w, expected_h)
             repaired = True
 
+        # While snapped to the taskbar the pet sits on the work-area edge; do not
+        # "repair" Y via availableGeometry (work-area shrinks when the tray rises
+        # and would yank the pet upward — feels like a snap).
         screens = QApplication.screens()
-        if screens and not any(screen.availableGeometry().adjusted(-64, -64, 64, 64).intersects(self.geometry()) for screen in screens):
+        if (
+            screens
+            and not self._taskbar_snapped
+            and not any(
+                screen.availableGeometry().adjusted(-64, -64, 64, 64).intersects(self.geometry())
+                for screen in screens
+            )
+        ):
             geo = (QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()).availableGeometry()
             self.move(
                 max(geo.left(), min(self.x(), geo.right() - self.width())),
@@ -1152,7 +1225,7 @@ class PetWindow(QWidget):
 
         self._tray_icon.setToolTip(_tr("PetWindow.tray_tooltip"))
 
-        menu = QMenu()
+        menu = apply_compact_tray_menu_style(QMenu())
 
         show_action = menu.addAction(_tr("PetWindow.tray_show_hide"))
         show_action.triggered.connect(self._toggle_visible)
@@ -1169,6 +1242,7 @@ class PetWindow(QWidget):
         menu.addSeparator()
 
         opacity_menu = menu.addMenu(_tr("PetWindow.tray_opacity"))
+        apply_compact_tray_menu_style(opacity_menu)
         for pct in [100, 80, 60, 40, 20]:
             act = opacity_menu.addAction(_tr("PetWindow.opacity_pct", pct=pct))
             act.triggered.connect(lambda checked, v=pct: self.set_opacity(v / 100.0))
@@ -1596,7 +1670,7 @@ class PetWindow(QWidget):
             else:
                 self._close_media_overlay()
         if "media_control_style" in data:
-            style = str(data.get("media_control_style", "aurora") or "").strip().lower()
+            style = str(data.get("media_control_style", "sakura") or "").strip().lower()
             if self._radial_media_item is not None:
                 self._radial_media_item.set_style(style)
         if data.get("compact_ai_window_reset_position") and self._compact_ai_window is not None:
@@ -1718,8 +1792,24 @@ class PetWindow(QWidget):
             self._suppress_compact_ai_sync = False
         self._move_compact_ai_with_pet(dx, dy)
 
+    def _taskbar_dpr(self) -> float:
+        """Current screen's device pixel ratio (screenAt scans all screens)."""
+        screen = QApplication.screenAt(self.geometry().center()) or QApplication.primaryScreen()
+        dpr = float(screen.devicePixelRatio()) if screen else 1.0
+        return dpr if dpr > 0 else 1.0
+
+    def _taskbar_logical_top(self, physical_top: int) -> int:
+        """Convert a physical-pixel Y (from Win32) to logical pixels for Qt geometry."""
+        return int(round(physical_top / self._taskbar_dpr()))
+
     def _get_taskbar_full_top(self) -> int | None:
-        """Returns the taskbar's logical-pixel top edge when fully visible (bottom taskbar only)."""
+        """Docked (fully shown) taskbar top via SHAppBarMessage(ABM_GETTASKBARPOS).
+
+        This is the *resting* AppBar rect, NOT the live auto-hide slide position.
+        On this machine when auto-hidden, ABM stays at the full-show top while
+        GetWindowRect sits mostly off-screen (~2px peek). Use only for unsnap
+        hysteresis / "where the bar lives when expanded".
+        """
         if os.name != "nt" or _shell32 is None or _APPBARDATA is None:
             return None
         try:
@@ -1727,92 +1817,472 @@ class PetWindow(QWidget):
             data.cbSize = ctypes.sizeof(_APPBARDATA)
             if _shell32.SHAppBarMessage(_ABM_GETTASKBARPOS, ctypes.byref(data)):
                 if data.uEdge == _ABE_BOTTOM:
-                    screen = QApplication.screenAt(self.geometry().center()) or QApplication.primaryScreen()
-                    dpr = screen.devicePixelRatio() if screen else 1.0
-                    return int(data.rc.top / dpr)
+                    return self._taskbar_logical_top(data.rc.top)
         except Exception:
             pass
         return None
 
-    def _get_taskbar_current_top(self) -> int | None:
-        """Returns the taskbar HWND's logical-pixel current top edge (moves when auto-hidden)."""
+    def _get_taskbar_hwnd(self) -> int:
+        hwnd = self._cached_taskbar_hwnd
+        if not hwnd:
+            hwnd = int(_user32.FindWindowW("Shell_TrayWnd", None) or 0)
+            self._cached_taskbar_hwnd = hwnd
+        return hwnd
+
+    def _get_taskbar_raw_tops(self, include_abm: bool = False) -> dict[str, int | None]:
+        """Read DWM / GetWindowRect (and optionally ABM) tops (logical px).
+
+        The ABM (SHAppBarMessage) read is skipped by default: the 8ms follow
+        loop only needs it when settled or when trace-logging, and callers
+        that do can fill ``out["abm"]`` lazily via _get_taskbar_full_top().
+        """
+        out: dict[str, int | None] = {"dwm": None, "gwr": None, "abm": None}
         if os.name != "nt":
-            return None
+            return out
         try:
-            hwnd = self._cached_taskbar_hwnd
-            if not hwnd:
-                hwnd = _user32.FindWindowW("Shell_TrayWnd", None)
-                self._cached_taskbar_hwnd = hwnd
-            if not hwnd:
-                return None
-            rect = ctypes.wintypes.RECT()
-            _user32.GetWindowRect(hwnd, ctypes.byref(rect))
-            screen = QApplication.screenAt(self.geometry().center()) or QApplication.primaryScreen()
-            dpr = screen.devicePixelRatio() if screen else 1.0
-            return int(rect.top / dpr)
+            hwnd = self._get_taskbar_hwnd()
+            if hwnd:
+                dpr = self._taskbar_dpr()
+                rect = ctypes.wintypes.RECT()
+                if _dwm_get_window_attribute is not None:
+                    hr = _dwm_get_window_attribute(
+                        hwnd,
+                        DWMWA_EXTENDED_FRAME_BOUNDS,
+                        ctypes.byref(rect),
+                        ctypes.sizeof(rect),
+                    )
+                    if hr == 0:
+                        out["dwm"] = int(round(rect.top / dpr))
+                if _user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                    out["gwr"] = int(round(rect.top / dpr))
+            if include_abm:
+                out["abm"] = self._get_taskbar_full_top()
         except Exception:
-            self._cached_taskbar_hwnd = 0  # reset on error
+            self._cached_taskbar_hwnd = 0
+        return out
+
+    def _get_taskbar_current_top(self) -> int | None:
+        """Live taskbar top in logical pixels (auto-hide slide + unlocked resize).
+
+        Prefers DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS) — the visible
+        DWM frame — then falls back to GetWindowRect. Explorer's auto-hide is a
+        hardcoded ~200–400ms slide inside explorer.exe; there is no public API
+        for its curve. Matching HWND/DWM bounds each poll is the only way to
+        stay on the same timeline as the system (inventing our own QPropertyAnimation
+        desyncs and feels "weird").
+        """
+        tops = self._get_taskbar_raw_tops()
+        if tops["dwm"] is not None:
+            return tops["dwm"]
+        return tops["gwr"]
+
+    def _taskbar_trace_flag_path(self):
+        return app_base_dir() / ".taskbar_trace"
+
+    def _taskbar_trace_csv_path(self):
+        return app_base_dir() / "taskbar_trace.csv"
+
+    def _taskbar_trace_is_enabled(self) -> bool:
+        """Works for taskbar-pin / python launch (no packaged exe, no shell env).
+
+        Priority:
+        1. BANDORI_TASKBAR_TRACE=0/1 forces off/on
+        2. Else: project file `.taskbar_trace` exists (re-checked; create/delete anytime)
+        """
+        # Called from the 8ms follow loop: parse the env var once (it cannot
+        # change mid-process) and rate-limit the flag-file stat to ~1s.
+        if not self._taskbar_trace_env_parsed:
+            env = os.environ.get("BANDORI_TASKBAR_TRACE", "").strip().lower()
+            if env in ("0", "false", "no", "off"):
+                self._taskbar_trace_env_override = False
+            elif env in ("1", "true", "yes", "on"):
+                self._taskbar_trace_env_override = True
+            else:
+                self._taskbar_trace_env_override = None
+            self._taskbar_trace_env_parsed = True
+        if self._taskbar_trace_env_override is not None:
+            return self._taskbar_trace_env_override
+        now = time.perf_counter()
+        if now - self._taskbar_trace_flag_checked_at > 1.0:
+            try:
+                self._taskbar_trace_flag_cache = self._taskbar_trace_flag_path().is_file()
+            except Exception:
+                self._taskbar_trace_flag_cache = False
+            self._taskbar_trace_flag_checked_at = now
+        return self._taskbar_trace_flag_cache
+
+    def _taskbar_trace_open(self):
+        if self._taskbar_trace_fp is not None:
+            return
+        try:
+            path = self._taskbar_trace_csv_path()
+            new_file = not path.exists() or path.stat().st_size == 0
+            self._taskbar_trace_fp = open(path, "a", encoding="utf-8", newline="")
+            if new_file:
+                self._taskbar_trace_fp.write(
+                    "wall_ms,mono_ms,event,"
+                    "dwm_top,gwr_top,abm_top,real_top,follow_top,smooth_f,"
+                    "pet_y,pet_h,pet_bottom,gap,"
+                    "real_d,follow_d,"
+                    "glide,glide_from,glide_to,glide_dur_ms,glide_t,glide_trig,"
+                    "snapped,poll_ms\n"
+                )
+            # Always mark a session so taskbar-pin users (no console) can confirm.
+            self._taskbar_trace_fp.write(
+                f"# session_open wall_ms={int(time.time() * 1000)} "
+                f"base={app_base_dir()} pid={os.getpid()}\n"
+            )
+            self._taskbar_trace_fp.flush()
+            # Side-car status file (visible even when stderr is hidden).
+            try:
+                status = app_base_dir() / "taskbar_trace.STATUS.txt"
+                status.write_text(
+                    f"taskbar_trace ON\n"
+                    f"csv={path}\n"
+                    f"flag={self._taskbar_trace_flag_path()}\n"
+                    f"pid={os.getpid()}\n"
+                    f"time={time.strftime('%Y-%m-%d %H:%M:%S')}\n",
+                    encoding="utf-8",
+                )
+            except Exception:
+                pass
+            print(f"[taskbar_trace] writing → {path}", flush=True)
+        except Exception as e:
+            print(f"[taskbar_trace] open failed: {e}", flush=True)
+            self._taskbar_trace_fp = None
+
+    def _taskbar_trace_log(
+        self,
+        *,
+        event: str,
+        tops: dict[str, int | None],
+        real_top: int | None,
+        follow_top: int | None,
+    ):
+        if not self._taskbar_trace_is_enabled():
+            return
+        self._taskbar_trace_open()
+        fp = self._taskbar_trace_fp
+        if fp is None:
+            return
+
+        now_mono = time.perf_counter()
+        wall_ms = int(time.time() * 1000)
+        mono_ms = int(now_mono * 1000)
+        pet_y = self.y()
+        pet_h = self.height()
+        pet_bottom = pet_y + pet_h
+        gap = (pet_bottom - real_top) if real_top is not None else ""
+
+        last = self._taskbar_trace_last
+        real_d = ""
+        follow_d = ""
+        if last is not None:
+            if real_top is not None and last.get("real_top") is not None:
+                real_d = real_top - last["real_top"]
+            if follow_top is not None and last.get("follow_top") is not None:
+                follow_d = follow_top - last["follow_top"]
+
+        glide = 1 if self._taskbar_glide_t0 is not None else 0
+        glide_from = ""
+        glide_to = ""
+        glide_dur_ms = ""
+        glide_t = ""
+        glide_trig = ""
+        if self._taskbar_glide_t0 is not None:
+            glide_from = round(self._taskbar_glide_from, 2)
+            glide_to = round(self._taskbar_glide_to, 2)
+            glide_dur_ms = round(self._taskbar_glide_dur * 1000, 1)
+            glide_trig = getattr(self, "_taskbar_glide_trigger", "")
+            if self._taskbar_glide_dur > 0:
+                glide_t = round(
+                    min(1.0, (now_mono - self._taskbar_glide_t0) / self._taskbar_glide_dur),
+                    3,
+                )
+
+        smooth_f = (
+            round(self._taskbar_smooth_top, 2)
+            if self._taskbar_smooth_top is not None
+            else ""
+        )
+        poll_ms = self._taskbar_follow_timer.interval()
+
+        def _v(x):
+            return "" if x is None else x
+
+        line = (
+            f"{wall_ms},{mono_ms},{event},"
+            f"{_v(tops.get('dwm'))},{_v(tops.get('gwr'))},{_v(tops.get('abm'))},"
+            f"{_v(real_top)},{_v(follow_top)},{smooth_f},"
+            f"{pet_y},{pet_h},{pet_bottom},{gap},"
+            f"{real_d},{follow_d},"
+            f"{glide},{glide_from},{glide_to},{glide_dur_ms},{glide_t},{glide_trig},"
+            f"{int(bool(self._taskbar_snapped))},{poll_ms}\n"
+        )
+        try:
+            fp.write(line)
+            # Flush on motion so a crash still keeps the trail.
+            if event != "idle":
+                fp.flush()
+        except Exception:
+            pass
+
+        self._taskbar_trace_last = {
+            "real_top": real_top,
+            "follow_top": follow_top,
+            "pet_bottom": pet_bottom,
+        }
+
+    def _taskbar_trace_should_sample(
+        self,
+        real_top: int | None,
+        follow_top: int | None,
+    ) -> str | None:
+        """Return event name if this tick should be logged, else None."""
+        if not self._taskbar_trace_is_enabled():
             return None
+        now = time.perf_counter()
+        last = self._taskbar_trace_last
+        moving = False
+        if last is not None:
+            if real_top is not None and last.get("real_top") != real_top:
+                moving = True
+            if follow_top is not None and last.get("follow_top") != follow_top:
+                moving = True
+            if last.get("pet_bottom") != self.y() + self.height():
+                moving = True
+        else:
+            moving = True
+
+        if self._taskbar_glide_t0 is not None:
+            moving = True
+
+        if moving:
+            # Keep sampling for 400ms after last motion so settle is visible.
+            self._taskbar_trace_active_until = now + 0.40
+            if self._taskbar_glide_t0 is not None:
+                return "glide"
+            if last is not None and real_top is not None and last.get("real_top") != real_top:
+                return "tray_move"
+            if last is not None and follow_top is not None and last.get("follow_top") != follow_top:
+                return "follow_move"
+            return "move"
+
+        if now <= self._taskbar_trace_active_until:
+            return "settle"
+        return None
+
+    def _stop_taskbar_anim(self):
+        """Stop any leftover QPropertyAnimation from older follow paths."""
+        anim = self._taskbar_pos_anim
+        if anim is not None:
+            anim.stop()
+            self._taskbar_pos_anim = None
+
+    def _clear_taskbar_smooth(self):
+        self._taskbar_smooth_top = None
+        self._taskbar_smooth_last_t = None
+        self._taskbar_glide_t0 = None
+        self._taskbar_glide_dur = 0.0
+
+    def _clear_taskbar_follow_state(self):
+        self._taskbar_snapped = False
+        self._taskbar_last_visible_top = None
+        self._cached_taskbar_full_top = None
+        self._clear_taskbar_smooth()
+        self._stop_taskbar_anim()
+
+    @staticmethod
+    def _ease_out_cubic(t: float) -> float:
+        """Fast start, soft landing — better matches 'tray already committed' show."""
+        t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)
+        return 1.0 - (1.0 - t) ** 3
+
+    def _sample_win_key(self):
+        """Stamp the last time either Win key was held down.
+
+        The taskbar 'show' animation has two triggers that both report the SAME
+        instant -46px jump in dwm/gwr bounds, so they are indistinguishable from
+        window rects alone:
+          * mouse hits screen bottom edge -> slower Fluent slide (~200-240ms)
+          * Win / Win+key press           -> near-instant reveal (~120-140ms)
+        The keyboard is the only signal that tells them apart. Called every
+        snapped poll (~8ms) so a brief Win tap is still caught.
+        """
+        if os.name != "nt":
+            return
+        try:
+            gaks = _user32.GetAsyncKeyState
+            # 0x5B VK_LWIN, 0x5C VK_RWIN; high bit (0x8000) = currently down.
+            if (gaks(0x5B) & 0x8000) or (gaks(0x5C) & 0x8000):
+                self._last_win_key_active_at = time.perf_counter()
+        except Exception:
+            pass
+
+    def _win_show_recently_triggered(self) -> bool:
+        """True if a Win-key reveal likely caused the current show jump.
+
+        Window keeps the stamp for a short grace window because the key is often
+        already released by the time the -46 jump surfaces on a poll.
+        """
+        last = getattr(self, "_last_win_key_active_at", 0.0)
+        return (time.perf_counter() - last) <= 0.35
+
+    def _taskbar_follow_top(self, real_top: int) -> int:
+        """Hybrid follow driven by taskbar_trace evidence:
+
+        - Continuous / down steps (small deltas): 1:1 direct lock (gap stayed 0).
+        - Large *up* jump (real_d ≈ -46 in one poll): HWND is already at the end
+          while pixels often still ease. OutCubic glide (~46px / 200ms) softens the
+          pet jump; front-loaded easing reduces the old 'starts late then crawls'.
+        """
+        _JUMP_PX = 20
+        now = time.perf_counter()
+        last = self._taskbar_last_visible_top
+        smooth = self._taskbar_smooth_top
+
+        if smooth is None:
+            self._taskbar_smooth_top = float(real_top)
+            self._taskbar_smooth_last_t = now
+            return real_top
+
+        # --- in-flight show glide ---
+        if self._taskbar_glide_t0 is not None:
+            if float(real_top) != self._taskbar_glide_to:
+                # Retarget from current eased position; keep OutCubic over remaining dist.
+                elapsed = now - self._taskbar_glide_t0
+                t = (
+                    min(1.0, elapsed / self._taskbar_glide_dur)
+                    if self._taskbar_glide_dur > 0
+                    else 1.0
+                )
+                u = self._ease_out_cubic(t)
+                cur = self._taskbar_glide_from + (
+                    self._taskbar_glide_to - self._taskbar_glide_from
+                ) * u
+                self._taskbar_glide_from = cur
+                self._taskbar_glide_to = float(real_top)
+                self._taskbar_glide_t0 = now
+                dist = abs(self._taskbar_glide_to - self._taskbar_glide_from)
+                self._taskbar_glide_dur = max(0.12, min(0.24, dist / 230.0))
+
+            elapsed = now - self._taskbar_glide_t0
+            if self._taskbar_glide_dur <= 0 or elapsed >= self._taskbar_glide_dur:
+                self._taskbar_glide_t0 = None
+                self._taskbar_smooth_top = float(real_top)
+                self._taskbar_smooth_last_t = now
+                return real_top
+
+            t = elapsed / self._taskbar_glide_dur
+            u = self._ease_out_cubic(t)
+            self._taskbar_smooth_top = self._taskbar_glide_from + (
+                self._taskbar_glide_to - self._taskbar_glide_from
+            ) * u
+            self._taskbar_smooth_last_t = now
+            return int(round(self._taskbar_smooth_top))
+
+        delta = 0 if last is None else real_top - last
+        err = float(real_top) - float(smooth)
+        # Pet's true on-screen bottom can't drift the way `smooth` can (the
+        # micro-correct path may reset smooth to real_top). Use it as the
+        # authoritative reveal signal and glide origin so a mouse-hover show
+        # always eases from where the pet actually is instead of snapping.
+        pet_bottom = float(self.y() + self.height())
+        pet_gap = pet_bottom - float(real_top)
+
+        # Tray rising = top moves up = smaller Y. Only then synthesize a show glide.
+        if delta <= -_JUMP_PX or err <= -_JUMP_PX or pet_gap >= _JUMP_PX:
+            self._taskbar_glide_from = pet_bottom
+            self._taskbar_glide_to = float(real_top)
+            self._taskbar_glide_t0 = now
+            dist = abs(self._taskbar_glide_to - self._taskbar_glide_from)
+            if self._win_show_recently_triggered():
+                # Win-key reveal is a near-instant Fluent pop; ~46px → ~200ms
+                # tracked the OS in traces.
+                self._taskbar_glide_trigger = "win"
+                self._taskbar_glide_dur = max(0.16, min(0.22, dist / 230.0))
+            else:
+                # Mouse bottom-edge reveal is the slower Fluent slide, so the
+                # pet must glide longer or it arrives early. ~46px → ~245ms.
+                # If the pet still lags the taskbar, raise the divisor toward
+                # 230; if it arrives early, lower it toward 160.
+                self._taskbar_glide_trigger = "mouse"
+                self._taskbar_glide_dur = max(0.20, min(0.28, dist / 188.0))
+            # Advance one poll quantum so motion is visible on the jump frame.
+            t = min(1.0, 0.008 / self._taskbar_glide_dur) if self._taskbar_glide_dur > 0 else 1.0
+            u = self._ease_out_cubic(t)
+            self._taskbar_smooth_top = self._taskbar_glide_from + (
+                self._taskbar_glide_to - self._taskbar_glide_from
+            ) * u
+            self._taskbar_smooth_last_t = now
+            return int(round(self._taskbar_smooth_top))
+
+        # Continuous / down: hard lock (proven gap=0 in traces).
+        self._taskbar_smooth_top = float(real_top)
+        self._taskbar_smooth_last_t = now
+        return real_top
 
     def _follow_taskbar(self):
-        """Poll taskbar position; on first movement start a smooth Qt animation
-        to the predicted final position instead of tracking frame-by-frame.
-
-        Polling is adaptive: 150 ms at rest, 50 ms while the taskbar animates
-        (only needed to catch direction reversals — the animation does the work).
-        """
-        _POLL_IDLE = 150
-        _POLL_ACTIVE = 50
+        """Follow live tray top while snapped (hybrid: lock down, ease big show jumps)."""
+        _POLL_IDLE = 200
+        _POLL_SNAPPED = 8  # ~120 Hz
 
         if os.name != "nt" or not self._taskbar_snapped or self._is_pet_dragging():
             if self._taskbar_follow_timer.interval() != _POLL_IDLE:
                 self._taskbar_follow_timer.setInterval(_POLL_IDLE)
             return
-        current_top = self._get_taskbar_current_top()
-        if current_top is None or self._taskbar_last_visible_top is None:
-            return
-        delta = current_top - self._taskbar_last_visible_top
-        if delta != 0:
-            self._taskbar_last_visible_top = current_top
-            full_top = self._cached_taskbar_full_top
-            if full_top is None:
-                return
-            if delta < 0:
-                # Taskbar rising (showing) → animate to fully-visible position
-                target_y = full_top - self.height()
-            else:
-                # Taskbar sinking (hiding) → animate to the 2-px hidden strip
-                screen = QApplication.screenAt(self.geometry().center()) or QApplication.primaryScreen()
-                if screen:
-                    dpr = screen.devicePixelRatio() or 1.0
-                    geo = screen.geometry()
-                    hidden_top = geo.y() + geo.height() - max(1, round(2.0 / dpr))
-                else:
-                    hidden_top = current_top
-                target_y = hidden_top - self.height()
-            self._start_taskbar_anim(target_y)
-            if self._taskbar_follow_timer.interval() != _POLL_ACTIVE:
-                self._taskbar_follow_timer.setInterval(_POLL_ACTIVE)
-                self._taskbar_follow_timer.start()
-        else:
-            if self._taskbar_follow_timer.interval() != _POLL_IDLE:
-                self._taskbar_follow_timer.setInterval(_POLL_IDLE)
 
-    def _start_taskbar_anim(self, target_y: int):
-        """Smoothly animate the pet window to target_y; no-op if already going there."""
-        anim = self._taskbar_pos_anim
-        if anim is not None and getattr(anim, "_target_y", None) == target_y:
-            return  # already animating to the right spot
-        if anim is not None:
-            anim.stop()
-        a = QPropertyAnimation(self, b"pos", self)
-        a.setDuration(220)
-        a.setStartValue(self.pos())
-        a.setEndValue(QPoint(self.x(), target_y))
-        a.setEasingCurve(QEasingCurve.Type.OutCubic)
-        a._target_y = target_y
-        a.start()
-        self._taskbar_pos_anim = a
+        if self._taskbar_follow_timer.interval() != _POLL_SNAPPED:
+            self._taskbar_follow_timer.setInterval(_POLL_SNAPPED)
+
+        # Stamp Win-key state every snapped poll so a reveal glide can tell a
+        # keyboard trigger (near-instant) from a mouse bottom-edge trigger
+        # (slower Fluent slide). Both surface as the same -46 HWND jump.
+        self._sample_win_key()
+
+        tops = self._get_taskbar_raw_tops()
+        real_top = tops["dwm"] if tops["dwm"] is not None else tops["gwr"]
+        if real_top is None:
+            return
+
+        self._stop_taskbar_anim()
+
+        follow_top = self._taskbar_follow_top(real_top)
+        target_y = follow_top - self.height()
+        if self.y() != target_y:
+            self._move_raw(self.x(), target_y)
+
+        # Micro-correct residual 1px flush errors after move (down path / DPI).
+        if self._taskbar_glide_t0 is None:
+            pet_bottom = self.y() + self.height()
+            if pet_bottom != real_top:
+                y_fix = real_top - self.height()
+                if self.y() != y_fix:
+                    self._move_raw(self.x(), y_fix)
+                    follow_top = real_top
+                    self._taskbar_smooth_top = float(real_top)
+
+        event = self._taskbar_trace_should_sample(real_top, follow_top)
+        if event is not None:
+            if tops["abm"] is None:
+                tops["abm"] = self._get_taskbar_full_top()
+            self._taskbar_trace_log(
+                event=event,
+                tops=tops,
+                real_top=real_top,
+                follow_top=follow_top,
+            )
+
+        settled = (
+            self._taskbar_glide_t0 is None
+            and self._taskbar_last_visible_top == real_top
+            and self.y() + self.height() == real_top
+        )
+        self._taskbar_last_visible_top = real_top
+        if settled:
+            full_top = tops["abm"] if tops["abm"] is not None else self._get_taskbar_full_top()
+            if full_top is not None:
+                self._cached_taskbar_full_top = full_top
 
     def _move_raw(self, x: int, y: int):
         """Move the window without snap logic (used by taskbar follow timer)."""
@@ -1832,25 +2302,62 @@ class PetWindow(QWidget):
     def _move_unconstrained(self, x: int, y: int):
         _SNAP_ZONE = 20   # snap when bottom is within 20 logical px of taskbar
         _UNSNAP_DIST = 8  # unsnap after dragging just 8 px above snapped position
+        # One raw-tops read per drag delta (was: up to 3 rounds of ABM/DWM/GWR
+        # queries per mouse-move). current_top derives exactly like
+        # _get_taskbar_current_top(); the snap trace below reuses the same read.
         full_top = self._get_taskbar_full_top()
-        current_top = self._get_taskbar_current_top() if full_top is not None else None
+        tops = self._get_taskbar_raw_tops() if full_top is not None else None
+        current_top = None
+        if tops is not None:
+            current_top = tops["dwm"] if tops["dwm"] is not None else tops["gwr"]
+        just_snapped = False
         if current_top is not None and full_top is not None:
             if y + self.height() >= current_top - _SNAP_ZONE:
                 # Snap to the *current* taskbar top so the pet stays flush
                 # even when the taskbar is auto-hidden (current_top ≈ screen
                 # bottom) rather than jumping to the fully-visible position.
+                # Re-read tray after height use so bottom == current_top exactly.
                 y = current_top - self.height()
+                self._stop_taskbar_anim()
+                self._taskbar_smooth_top = float(current_top)
+                self._taskbar_smooth_last_t = time.perf_counter()
+                self._taskbar_glide_t0 = None
+                self._taskbar_glide_dur = 0.0
+                self._cached_taskbar_full_top = full_top
+                self._taskbar_last_visible_top = current_top
                 if not self._taskbar_snapped:
                     self._taskbar_snapped = True
-                    self._cached_taskbar_full_top = full_top
-                    self._taskbar_last_visible_top = current_top
+                    just_snapped = True
+                if self._taskbar_follow_timer.interval() != 8:
+                    self._taskbar_follow_timer.setInterval(8)
             elif y + self.height() < full_top - _UNSNAP_DIST:
                 # Use full_top for unsnap so "drag away" is measured from the
                 # fully-visible taskbar — gives consistent hysteresis.
-                self._taskbar_snapped = False
-                self._taskbar_last_visible_top = None
-                self._cached_taskbar_full_top = None
+                self._clear_taskbar_follow_state()
         self._move_raw(x, y)
+        # Post-move flush: fixes rare 1px / stale-height snap offset on the way down.
+        if self._taskbar_snapped and not self._is_pet_dragging():
+            ct = current_top if current_top is not None else self._get_taskbar_current_top()
+            if ct is not None:
+                y_flush = ct - self.height()
+                if self.y() != y_flush:
+                    self._move_raw(self.x(), y_flush)
+                    self._taskbar_smooth_top = float(ct)
+                    self._taskbar_last_visible_top = ct
+                    current_top = ct
+        if just_snapped:
+            # Log after move so gap reflects the flushed position (not pre-move y).
+            if tops is None:
+                tops = self._get_taskbar_raw_tops()
+            if tops.get("abm") is None:
+                tops["abm"] = full_top
+            rt = current_top if current_top is not None else tops.get("dwm") or tops.get("gwr")
+            self._taskbar_trace_log(
+                event="snap",
+                tops=tops,
+                real_top=rt,
+                follow_top=rt,
+            )
 
     def _is_pet_dragging(self) -> bool:
         return bool(
@@ -1903,6 +2410,18 @@ class PetWindow(QWidget):
             return
         anchor = self._pet_bubble_anchor()
 
+        daily_entries = complete_daily_chat_entries(greetings)
+        if daily_entries:
+            entry = random.choice(daily_entries)
+            text = entry["text"]
+            motion = entry["motion"]
+            expression = entry["expression"]
+            if motion or expression:
+                self._start_click_motion(motion, expression)
+            self._speech_bubble.show_text(text, anchor)
+            self._speak_pet_text(text)
+            return
+
         click_responses = greetings.get("click_responses", [])
         if click_responses:
             entry = random.choice(click_responses)
@@ -1944,10 +2463,22 @@ class PetWindow(QWidget):
         if not char:
             return {}
         path = app_base_dir() / "characters" / char / "greetings.json"
+        # mtime-keyed cache: called from mouse handlers; a stat is far cheaper
+        # than a full read+parse and still picks up on-disk edits instantly.
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            mtime = path.stat().st_mtime
+        except OSError:
+            self._greetings_cache = None
+            return {}
+        cached = getattr(self, "_greetings_cache", None)
+        if cached is not None and cached[0] == char and cached[1] == mtime:
+            return cached[2]
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             return {}
+        self._greetings_cache = (char, mtime, data)
+        return data
 
     def _trigger_click_motion(self, x: float, y: float, area_name: str = ""):
         model = self._live2d_widget.model
@@ -2153,10 +2684,10 @@ class PetWindow(QWidget):
         radial_menu = RadialMenu()
         radial_menu.lock_toggled.connect(self._on_lock_toggled)
 
-        style = self._cfg.get("media_control_style", "aurora") if self._cfg else "aurora"
+        style = self._cfg.get("media_control_style", "sakura") if self._cfg else "sakura"
         style = str(style or "").strip().lower()
         if style not in MediaRadialItem.VALID_STYLES:
-            style = "aurora"
+            style = "sakura"
         self._radial_media_item = radial_menu.add_media_item(style=style)
         self._radial_media_item.command_requested.connect(self._send_media_command)
         self._radial_media_item.style_selected.connect(self._on_radial_media_style_selected)
@@ -2560,38 +3091,7 @@ class PetWindow(QWidget):
                 pass
             return None
 
-        tag_map = {
-            "angry": "angry",
-            "cry": "cry",
-            "bye": "bye",
-            "kandou": "kandou",
-            "smile": "smile",
-            "sad": "sad",
-            "surprised": "surprised",
-            "thinking": "thinking",
-            "shame": "shame",
-            "serious": "serious",
-            "wink": "wink",
-            "kime": "kime",
-            "nf": "nf",
-            "nnf": "nnf",
-            "scared": "scared",
-            "sleep": "sleep",
-            "sneeze": "sneeze",
-            "sing": "sing",
-            "sigh": "sigh",
-            "odoodo": "odoodo",
-            "eeto": "eeto",
-            "gattsu": "gattsu",
-            "jaan": "jaan",
-            "nekodere": "nekodere",
-            "pui": "pui",
-            "niya": "niya",
-            "ando": "ando",
-            "mitore": "mitore",
-            "nod": "nod",
-            "f": "f",
-        }
+        tag_map = _CHAT_ACTION_TAG_MAP
 
         if "." in normalized:
             base, ext = normalized.rsplit(".", 1)
@@ -3094,9 +3594,7 @@ class PetWindow(QWidget):
         geo = screen.availableGeometry()
         cx = geo.left() + (geo.width() - self.width()) // 2
         cy = geo.top() + (geo.height() - self.height()) // 2
-        self._taskbar_snapped = False
-        self._taskbar_last_visible_top = None
-        self._cached_taskbar_full_top = None
+        self._clear_taskbar_follow_state()
         self.move(cx, cy)
         self._play_entrance()
         self._save_config()
@@ -3274,13 +3772,14 @@ class PetWindow(QWidget):
         if not isinstance(models, list):
             models = []
         entry = {"character": self._current_char, "costume": self._current_costume, "path": path}
-        default_motion = self._current_model_entry().get("default_motion", "")
+        current_entry = self._current_model_entry()
+        default_motion = current_entry.get("default_motion", "")
         if default_motion:
             entry["default_motion"] = default_motion
-        default_expression = self._current_model_entry().get("default_expression", "")
+        default_expression = current_entry.get("default_expression", "")
         if default_expression:
             entry["default_expression"] = default_expression
-        click_motion_actions = self._current_model_entry().get("click_motion_actions", {})
+        click_motion_actions = current_entry.get("click_motion_actions", {})
         if click_motion_actions:
             entry["click_motion_actions"] = click_motion_actions
         if hasattr(self._cfg, "set_model_action_profile"):

@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QApplication
 from radial_menu import MediaRadialItem, RadialMenu, _media_icon
 
 
-_STYLES = ("aurora", "neon", "glass", "velvet", "prism", "blossom", "matcha")
+_STYLES = ("sakura", "sky", "matcha", "ink", "sunset", "snow")
 
 
 def _app():

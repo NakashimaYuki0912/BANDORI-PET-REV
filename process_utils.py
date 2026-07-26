@@ -1,3 +1,4 @@
+import functools
 import os
 import sys
 import hashlib
@@ -41,6 +42,8 @@ def set_windows_app_user_model_id(app_id: str) -> None:
         pass
 
 
+@functools.lru_cache(maxsize=1)
 def ipc_server_name() -> str:
+    # Pure function of the install dir; called on every IPC reconnect retry.
     digest = hashlib.sha1(str(app_base_dir()).encode("utf-8")).hexdigest()[:12]
     return f"BandoriPet-{digest}"

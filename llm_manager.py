@@ -381,14 +381,26 @@ _BASE_DIR = app_base_dir()
 _CHARACTERS_DIR = _BASE_DIR / "characters"
 _OUTFIT_JSON_PATH = _BASE_DIR / "outfit.json"
 _CHAR_MD_CACHE: dict[str, str] | None = None
+_KEY_TO_NAME_CACHE: tuple[float, dict[str, str]] | None = None
 
 
 def _build_key_to_name_mapping() -> dict[str, str]:
-    if not _OUTFIT_JSON_PATH.exists():
+    # Called on every system-prompt build; cache the parsed outfit.json by
+    # mtime so repeated sends only cost a stat instead of a read+parse.
+    global _KEY_TO_NAME_CACHE
+    try:
+        mtime = _OUTFIT_JSON_PATH.stat().st_mtime
+    except OSError:
+        _KEY_TO_NAME_CACHE = None
         return {}
+    cached = _KEY_TO_NAME_CACHE
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
     data = json.loads(_OUTFIT_JSON_PATH.read_text(encoding="utf-8"))
     chars = data.get("characters", {})
-    return {key: info.get("display", key) for key, info in chars.items()}
+    mapping = {key: info.get("display", key) for key, info in chars.items()}
+    _KEY_TO_NAME_CACHE = (mtime, mapping)
+    return mapping
 
 
 def _scan_character_md_files() -> dict[str, str]:
@@ -934,12 +946,18 @@ def _normalize_stream_tool_calls(tool_calls: list[dict]) -> list[dict]:
     return normalized
 
 
+_SEARCH_SOURCE_TITLE_RE = re.compile(r"^\d+\.\s+(.+)$")
+_INLINE_SOURCES_RE = re.compile(
+    r"\{\s*\"(?:web_search_sources|search_sources|sources)\"\s*:\s*\[.*?\]\s*\}", re.S
+)
+
+
 def _extract_search_sources(text: str) -> list[dict]:
     sources = []
     current_title = ""
     for line in str(text or "").splitlines():
         stripped = line.strip()
-        title_match = re.match(r"^\d+\.\s+(.+)$", stripped)
+        title_match = _SEARCH_SOURCE_TITLE_RE.match(stripped)
         if title_match:
             current_title = title_match.group(1).strip()
             continue
@@ -978,8 +996,7 @@ def extract_inline_search_sources(content: str) -> tuple[str, list[dict]]:
         except (TypeError, ValueError):
             return match.group(0)
 
-    pattern = re.compile(r"\{\s*\"(?:web_search_sources|search_sources|sources)\"\s*:\s*\[.*?\]\s*\}", re.S)
-    cleaned = pattern.sub(replace_json, text)
+    cleaned = _INLINE_SOURCES_RE.sub(replace_json, text)
     return cleaned.rstrip(), sources
 
 

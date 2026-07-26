@@ -1,4 +1,5 @@
 import sys
+import os
 import importlib.util
 from pathlib import Path
 
@@ -47,6 +48,70 @@ def assert_pyside6_frameless_window() -> None:
             "Run: python3 -m pip install --force-reinstall --no-deps "
             "PySideSix-Frameless-Window==0.8.1"
         )
+
+
+def _candidate_font_files() -> list[Path]:
+    candidates: list[Path] = []
+    if sys.platform.startswith("win"):
+        windir = Path(os.environ.get("WINDIR", r"C:\Windows"))
+        fonts = windir / "Fonts"
+        candidates.extend([
+            fonts / "msyh.ttc",
+            fonts / "msyhbd.ttc",
+            fonts / "segoeui.ttf",
+            fonts / "arial.ttf",
+        ])
+    elif sys.platform == "darwin":
+        candidates.extend([
+            Path("/System/Library/Fonts/PingFang.ttc"),
+            Path("/System/Library/Fonts/Supplemental/Arial Unicode.ttf"),
+            Path("/System/Library/Fonts/Supplemental/Arial.ttf"),
+        ])
+    else:
+        candidates.extend([
+            Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
+            Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
+            Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+        ])
+    return candidates
+
+
+def apply_qt_font_fallback(app=None) -> bool:
+    """Install and select a readable app font after QApplication is created."""
+    try:
+        from PySide6.QtGui import QFont, QFontDatabase
+        from PySide6.QtWidgets import QApplication
+    except Exception:
+        return False
+
+    loaded_families: list[str] = []
+    for font_file in _candidate_font_files():
+        if not font_file.exists():
+            continue
+        font_id = QFontDatabase.addApplicationFont(str(font_file))
+        if font_id >= 0:
+            loaded_families.extend(QFontDatabase.applicationFontFamilies(font_id))
+
+    preferred = [
+        "Microsoft YaHei UI",
+        "Microsoft YaHei",
+        "Segoe UI",
+        "PingFang SC",
+        "Noto Sans CJK SC",
+        "Noto Sans CJK",
+        "DejaVu Sans",
+        "Arial",
+    ]
+    available = set(QFontDatabase.families()) | set(loaded_families)
+    family = next((name for name in preferred if name in available), "")
+    if not family:
+        return False
+
+    target = app or QApplication.instance()
+    if target is None:
+        return False
+    target.setFont(QFont(family))
+    return True
 
 
 prefer_local_pyside6_fluent_widgets()

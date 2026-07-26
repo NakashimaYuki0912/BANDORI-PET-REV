@@ -246,6 +246,9 @@ def _validate_chat_database(conn: sqlite3.Connection):
 
 
 def _ensure_database(db_path=DB_PATH):
+    # The file may have just been replaced (import/restore): force a full
+    # schema create/migration pass even if this path was seen before.
+    _SCHEMA_READY_PATHS.discard(str(db_path))
     manager = DatabaseManager(db_path)
     manager.close()
 
@@ -337,13 +340,23 @@ def import_chat_database(source_path: str, target_path=DB_PATH) -> dict:
     return chat_database_summary(str(target))
 
 
+# Paths whose schema has already been created/migrated by this process.
+# Async DB write tasks open a fresh DatabaseManager per write; replaying the
+# full DDL (~10 CREATE TABLE + indexes + PRAGMA table_info migrations) on
+# every insert is pure overhead once the schema is known-good.
+_SCHEMA_READY_PATHS: set[str] = set()
+
+
 class DatabaseManager:
     def __init__(self, db_path=DB_PATH):
         self._db_path = db_path
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
-        self._create_tables()
+        path_key = str(db_path)
+        if path_key not in _SCHEMA_READY_PATHS:
+            self._create_tables()
+            _SCHEMA_READY_PATHS.add(path_key)
 
     def _create_tables(self):
         self._conn.execute("""
@@ -460,6 +473,7 @@ class DatabaseManager:
                 created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
             )
         """)
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id, id)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_group_messages_key_conv_id ON group_messages(group_key, conversation_id, id)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_character_memories_lookup ON character_memories(character, user_key, importance, updated_at)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_mood_events_lookup ON mood_events(character, user_key, created_at)")
@@ -520,9 +534,12 @@ class DatabaseManager:
         mood: str | None = None,
         mood_intensity: int | None = None,
         summary: str | None = None,
+        _current: dict | None = None,
     ) -> dict:
         user_key = self._normalize_user_key(user_key)
-        current = self.get_relationship_state(character, user_key)
+        # _current lets apply_relationship_delta reuse its own freshly-read
+        # state instead of issuing a duplicate SELECT per chat message.
+        current = _current if _current is not None else self.get_relationship_state(character, user_key)
         next_state = {
             "affection": _clamp_int(current["affection"] if affection is None else affection, 0, 100, 50),
             "trust": _clamp_int(current["trust"] if trust is None else trust, 0, 100, 50),
@@ -588,6 +605,7 @@ class DatabaseManager:
             familiarity=current["familiarity"] + familiarity_delta,
             mood=mood or current["mood"],
             mood_intensity=mood_intensity,
+            _current=current,
         )
         self.add_mood_event(
             character,
@@ -879,10 +897,16 @@ class DatabaseManager:
         self._conn.commit()
 
     def get_group_conversations(self, group_key: str) -> list[dict]:
+        # Only the newest row per conversation survives the dedupe below, so
+        # let SQLite reduce the set instead of materializing every message.
+        # (role is guaranteed valid by the table CHECK constraint and id is
+        # the PK, so the newest row is never skipped by the Python filters.)
         rows = self._conn.execute(
             "SELECT conversation_id, id, role, content, created_at FROM group_messages "
-            "WHERE group_key=? ORDER BY id DESC",
-            (group_key,)
+            "WHERE group_key=? AND id IN ("
+            "  SELECT MAX(id) FROM group_messages WHERE group_key=? GROUP BY conversation_id"
+            ") ORDER BY id DESC",
+            (group_key, group_key)
         ).fetchall()
         result = []
         seen = set()
@@ -907,8 +931,10 @@ class DatabaseManager:
         return result
 
     def get_group_chats(self) -> list[dict]:
+        # Newest row per group only (see note in get_group_conversations).
         rows = self._conn.execute(
             "SELECT group_key, conversation_id, id, role, content, created_at FROM group_messages "
+            "WHERE id IN (SELECT MAX(id) FROM group_messages GROUP BY group_key) "
             "ORDER BY id DESC"
         ).fetchall()
         result = []

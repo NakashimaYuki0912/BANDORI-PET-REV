@@ -65,6 +65,8 @@ class Live2DWidget(QOpenGLWidget):
             (-6, 0), (6, 0), (0, -6), (0, 6),
         )
         self._hit_alpha_cache = {}
+        self._alpha_mask_tables = {}
+        self._head_track_sent = None
         self._visible_bounds_cache = None
         self._visible_bounds_cache_at = -1000
         self._visible_bounds_cache_ttl_ms = 500
@@ -232,6 +234,9 @@ class Live2DWidget(QOpenGLWidget):
     def _load_model_internal(self, model_json_path: str):
         if not model_json_path or not self._live2d:
             return
+        # A (re)load resets the renderer's drag state; force the next
+        # head-tracking poll to resend the target.
+        self._head_track_sent = None
         self._safe_make_current()
         try:
             if is_virtual_path(model_json_path):
@@ -521,8 +526,14 @@ class Live2DWidget(QOpenGLWidget):
     def _poll_head_tracking(self):
         if not self._model:
             return
+        target = (self._cache_w_half, self._cache_h_half)
+        if target == self._head_track_sent:
+            # Lua side only stores the drag target; resending identical
+            # coordinates 30x/s is a pure Python->Lua crossing waste.
+            return
         try:
             self._model.Drag(self._cache_w_half, self._cache_h_half)
+            self._head_track_sent = target
         except Exception as exc:
             print(
                 f"[{datetime.now().strftime('%H:%M:%S')}] "
@@ -786,21 +797,32 @@ class Live2DWidget(QOpenGLWidget):
         raw = bytes(data)
         min_x, max_x = width, -1
         min_y, max_y = height, -1
-        stride, threshold = width * 4, self._hit_alpha_threshold
+        threshold = self._hit_alpha_threshold
         step = 1 if width * height <= 600000 else 2
-        
+
+        # C-speed scan: extract the alpha plane, binarize it with a cached
+        # 256-byte translate table, then use bytes.find/rfind per sampled row.
+        # Produces the same sampled min/max as the previous per-pixel loop.
+        table = self._alpha_mask_tables.get(threshold)
+        if table is None:
+            table = bytes(0xFF if v > threshold else 0 for v in range(256))
+            self._alpha_mask_tables[threshold] = table
+        mask = raw[3::4].translate(table)
+
         for y_gl in range(0, height, step):
-            row_offset = y_gl * stride
-            hit_in_row = False
-            for x in range(0, width, step):
-                if raw[row_offset + x * 4 + 3] > threshold:
-                    hit_in_row = True
-                    if x < min_x: min_x = x
-                    if x > max_x: max_x = x
-            if hit_in_row:
-                qt_y = height - 1 - y_gl
-                if qt_y < min_y: min_y = qt_y
-                if qt_y > max_y: max_y = qt_y
+            row = mask[y_gl * width:y_gl * width + width]
+            if step != 1:
+                row = row[::step]
+            first = row.find(b"\xff")
+            if first < 0:
+                continue
+            x_first = first * step
+            x_last = row.rfind(b"\xff") * step
+            if x_first < min_x: min_x = x_first
+            if x_last > max_x: max_x = x_last
+            qt_y = height - 1 - y_gl
+            if qt_y < min_y: min_y = qt_y
+            if qt_y > max_y: max_y = qt_y
 
         if max_x < min_x or max_y < min_y: return None
         scale = self._system_scale or 1.0

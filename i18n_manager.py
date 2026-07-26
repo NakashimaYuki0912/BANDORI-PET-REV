@@ -17,6 +17,7 @@ class I18nManager:
             return
         self._initialized = True
         self._translations = {}
+        self._loaded = False
         self._current_lang = "en_US"
         self._lang_dir = app_base_dir() / "lang"
 
@@ -31,9 +32,12 @@ class I18nManager:
                 self._translations = json.load(f)
         else:
             self._translations = {}
+        self._loaded = True
 
     def get_translation(self, key: str, default: str = None, **kwargs) -> str:
-        if not self._translations:
+        # Gate on a loaded flag, not dict truthiness: a missing/empty language
+        # file must not trigger a filesystem stat on every tr() lookup.
+        if not self._loaded:
             self._load()
         text = self._translations.get(key)
         if text is None:

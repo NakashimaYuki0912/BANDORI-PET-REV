@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BandoriPet 左侧导航栏重设计方案</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Segoe UI', system-ui, sans-serif; background: #1a1d2e; color: #dce4f7; padding: 24px; }
+h1 { font-size: 22px; margin-bottom: 8px; }
+.subtitle { color: #8895b4; margin-bottom: 32px; font-size: 14px; }
+h2 { font-size: 16px; margin: 24px 0 12px; color: #c4cee8; }
+.options { display: flex; gap: 24px; flex-wrap: wrap; }
+.card { background: #1f2335; border: 1px solid #2a3045; border-radius: 10px; padding: 20px; width: 260px; }
+.card.selected { border-color: #5771e6; box-shadow: 0 0 0 1px #5771e6; }
+.card h3 { font-size: 14px; margin-bottom: 6px; }
+.card p { font-size: 12px; color: #8895b4; line-height: 1.5; margin-bottom: 14px; }
+.card .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-right: 4px; }
+.tag.rec { background: #2d3b6e; color: #8eb1ff; }
+.tag.alt { background: #3d2e1e; color: #f0c060; }
+.sidebar-preview { background: #161825; border: 1px solid #2a3045; border-radius: 8px; width: 180px; overflow: hidden; }
+.sidebar-preview.wide { width: 220px; }
+.sidebar-preview.compact { width: 160px; }
+.nav-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; cursor: pointer; border-left: 2px solid transparent; font-size: 11px; }
+.nav-item .icon { width: 18px; height: 18px; border-radius: 4px; flex-shrink: 0; }
+.nav-item.active { border-left-color: #5771e6; background: rgba(87,113,230,.15); }
+.nav-item:hover { background: rgba(255,255,255,.04); }
+.nav-header { padding: 10px 12px 6px; font-size: 9px; text-transform: uppercase; color: #556; letter-spacing: 1px; }
+.desc { font-size: 12px; color: #8895b4; margin-top: 8px; }
+.btn { display: inline-block; padding: 6px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; border: none; margin-top: 8px; }
+.btn-primary { background: #5771e6; color: #fff; }
+.btn:hover { opacity: .85; }
+.note { background: #232840; border-left: 3px solid #5771e6; padding: 12px 16px; border-radius: 0 6px 6px 0; font-size: 13px; margin-top: 24px; }
+.icon-head { background: #5771e6; }
+.icon-char { background: #e6578a; }
+.icon-tts { background: #57c7e6; }
+.icon-weather { background: #e6c457; }
+.icon-memory { background: #8b57e6; }
+.icon-relation { background: #e6579e; }
+.icon-compact { background: #57e6a8; }
+.icon-chat { background: #e68b57; }
+.icon-mcp { background: #57e68b; }
+.icon-quality { background: #a8e657; }
+.icon-about { background: #c4c4c4; }
+</style>
+</head>
+<body>
+
+<h1>左侧导航栏重设计方案</h1>
+<p class="subtitle">当前：13 个按钮，210px 宽，按钮高 46px，间距 4px → 拥挤</p>
+
+<h2>方案 A — 折叠分组 (推荐)</h2>
+<div class="options">
+<div class="card selected">
+<h3>A1 · 两层分组 <span class="tag rec">推荐</span></h3>
+<p>分"主要"和"高级"两个可折叠组，默认展开主要组</p>
+<div class="sidebar-preview">
+  <div class="nav-header" style="cursor:pointer">▼ 角色与对话</div>
+  <div class="nav-item active"><div class="icon icon-char"></div>角色与服装</div>
+  <div class="nav-item"><div class="icon icon-head"></div>LLM 设置</div>
+  <div class="nav-item"><div class="icon icon-tts"></div>TTS 语音</div>
+  <div class="nav-item"><div class="icon icon-weather"></div>天气</div>
+  <div class="nav-item"><div class="icon icon-memory"></div>用户视角</div>
+  <div class="nav-item"><div class="icon icon-memory"></div>好感度/记忆</div>
+  <div class="nav-item"><div class="icon icon-relation"></div>关系指南</div>
+  <div class="nav-header" style="cursor:pointer">▼ 界面与集成</div>
+  <div class="nav-item"><div class="icon icon-compact"></div>紧凑悬浮窗</div>
+  <div class="nav-item"><div class="icon icon-chat"></div>聊天接入</div>
+  <div class="nav-header" style="cursor:pointer">▶ 系统</div>
+  <div class="nav-item"><div class="icon icon-mcp"></div>MCP 工具</div>
+  <div class="nav-item"><div class="icon icon-quality"></div>画质与性能</div>
+  <div class="nav-item"><div class="icon icon-about"></div>关于</div>
+</div>
+<p class="desc">主要按钮 4 个始终可见，高级按钮折叠隐藏</p>
+</div>
+
+<div class="card">
+<h3>A2 · 图标模式切换</h3>
+<p>折叠后可切为纯图标模式，鼠标悬浮展开</p>
+<div class="sidebar-preview compact">
+  <div class="nav-item active"><div class="icon icon-char"></div>角色</div>
+  <div class="nav-item"><div class="icon icon-head"></div>LLM</div>
+  <div class="nav-item"><div class="icon icon-tts"></div>TTS</div>
+  <div class="nav-item"><div class="icon icon-weather"></div>天气</div>
+  <div class="nav-item"><div class="icon icon-quality"></div>画质</div>
+  <div class="nav-item"><div class="icon icon-about"></div>关于</div>
+</div>
+<p class="desc">按钮高度降到 32px，宽度 160px，直接就不挤了</p>
+</div>
+</div>
+
+<h2>方案 B — 紧凑按钮</h2>
+<div class="options">
+<div class="card">
+<h3>B1 · 扁平紧凑</h3>
+<p>按钮高度 36px，字号 9pt，间距 2px</p>
+<div class="sidebar-preview">
+  <div class="nav-item active"><div class="icon icon-char"></div>角色与服装</div>
+  <div class="nav-item"><div class="icon icon-head"></div>LLM 模型设置</div>
+  <div class="nav-item"><div class="icon icon-tts"></div>TTS 语音合成</div>
+  <div class="nav-item"><div class="icon icon-weather"></div>天气配置</div>
+  <div class="nav-item"><div class="icon icon-memory"></div>好感度/记忆</div>
+  <div class="nav-item"><div class="icon icon-relation"></div>关系指南</div>
+  <div class="nav-item"><div class="icon icon-compact"></div>紧凑悬浮窗</div>
+  <div class="nav-item"><div class="icon icon-chat"></div>聊天接入</div>
+  <div class="nav-item"><div class="icon icon-mcp"></div>MCP 工具</div>
+  <div class="nav-item"><div class="icon icon-quality"></div>画质与性能</div>
+</div>
+<p class="desc">全部可见，无需滚动，但文字会缩略</p>
+</div>
+
+<div class="card">
+<h3>B2 · 图标 + 下方文字</h3>
+<p>每个按钮两行：上方图标、下方小字</p>
+<div class="sidebar-preview" style="width:220px; display:flex; flex-wrap:wrap; gap:4px; padding:8px;">
+  <div style="width:48px;height:48px;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;border-radius:6px;font-size:9px;text-align:center;background:rgba(87,113,230,.2);">
+    <div class="icon icon-char" style="width:20px;height:20px;border-radius:4px;"></div>角色
+  </div>
+  <div style="width:48px;height:48px;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;border-radius:6px;font-size:9px;text-align:center;">
+    <div class="icon icon-head" style="width:20px;height:20px;border-radius:4px;"></div>LLM
+  </div>
+  <div style="width:48px;height:48px;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;border-radius:6px;font-size:9px;text-align:center;">
+    <div class="icon icon-tts" style="width:20px;height:20px;border-radius:4px;"></div>TTS
+  </div>
+  <div style="width:48px;height:48px;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;border-radius:6px;font-size:9px;text-align:center;">
+    <div class="icon icon-quality" style="width:20px;height:20px;border-radius:4px;"></div>画质
+  </div>
+</div>
+<p class="desc">横向排列，侧栏可以更窄，但文字极小</p>
+</div>
+</div>
+
+<h2>方案 C — 选项卡分组</h2>
+<div class="options">
+<div class="card">
+<h3>C1 · 顶部 Tab 切换</h3>
+<p>侧栏顶部加一行小 Tab："角色" | "对话" | "高级"</p>
+<div class="sidebar-preview" style="width:190px;">
+  <div style="display:flex;gap:0;font-size:10px;padding:6px 8px;border-bottom:1px solid #2a3045;">
+    <div style="padding:4px 8px;background:rgba(87,113,230,.2);border-radius:4px;">角色</div>
+    <div style="padding:4px 8px;color:#8895b4;">对话</div>
+    <div style="padding:4px 8px;color:#8895b4;">高级</div>
+  </div>
+  <div class="nav-item active"><div class="icon icon-char"></div>角色与服装</div>
+  <div class="nav-item"><div class="icon icon-memory"></div>好感度/记忆</div>
+  <div class="nav-item"><div class="icon icon-weather"></div>天气</div>
+  <div class="nav-item"><div class="icon icon-about"></div>关于</div>
+</div>
+<p class="desc">每页只显示 4-5 个按钮，切换 Tab 翻页</p>
+</div>
+
+<div class="card">
+<h3>C2 · 底部模式切换</h3>
+<p>侧栏底部常驻"角色 / AI / 系统"三模式切换</p>
+<div class="sidebar-preview" style="width:190px;">
+  <div class="nav-item active"><div class="icon icon-char"></div>角色与服装</div>
+  <div class="nav-item"><div class="icon icon-weather"></div>天气</div>
+  <div class="nav-item"><div class="icon icon-memory"></div>好感度/记忆</div>
+  <div class="nav-item"><div class="icon icon-relation"></div>关系指南</div>
+  <hr style="border-color:#2a3045;margin:4px 8px;">
+  <div style="display:flex;justify-content:space-around;padding:6px;">
+    <div style="width:24px;height:24px;border-radius:50%;background:#5771e6;"></div>
+    <div style="width:24px;height:24px;border-radius:50%;background:#2a3045;"></div>
+    <div style="width:24px;height:24px;border-radius:50%;background:#2a3045;"></div>
+  </div>
+</div>
+<p class="desc">省掉顶部 Tab 行，底部圆点切换更简洁</p>
+</div>
+</div>
+
+<div class="note" style="border-color:#22c55e;">
+  <strong>✅ 已实施 C1 方案</strong><br>
+  <strong>角色</strong> (4): 角色与服装 · 天气 · 用户视角 · 好感度/记忆<br>
+  <strong>对话</strong> (4): LLM 设置 · TTS 语音 · 关系指南 · 聊天接入<br>
+  <strong>高级</strong> (3): 紧凑悬浮窗 · MCP 工具 · 画质与性能<br>
+  <strong>底部常驻</strong>: 关于<br><br>
+  🖱️ <strong>聊天窗口本身</strong>通过双击桌宠 / 右键 → ◈ 聊天 打开，不在设置侧栏里。
+</div>
+
+<p style="margin-top:24px;color:#556;font-size:12px;">选择方案后我会直接实施到 settings_window.py</p>
+
+</body>
+</html>

@@ -1,5 +1,6 @@
 """Shared Windows API constants for DWM, SetWindowPos, and hit-testing."""
 # DWM window attributes
+DWMWA_EXTENDED_FRAME_BOUNDS = 9  # visible frame rect (physical px); better than GetWindowRect when DWM animates
 DWMWA_WINDOW_CORNER_PREFERENCE = 33
 DWMWA_BORDER_COLOR = 34
 DWMWCP_DONOTROUND = 1

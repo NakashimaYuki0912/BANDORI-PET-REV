@@ -1,0 +1,5 @@
+taskbar_trace ON
+csv=D:\VS_program\BANDORI-PET-REV\taskbar_trace.csv
+flag=D:\VS_program\BANDORI-PET-REV\.taskbar_trace
+pid=33836
+time=2026-07-26 17:56:43

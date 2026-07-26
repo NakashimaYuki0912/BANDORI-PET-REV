@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>径向菜单重设计方案</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Segoe UI', system-ui, sans-serif; background: #1a1d2e; color: #dce4f7; padding: 24px; }
+h1 { font-size: 22px; margin-bottom: 8px; }
+.subtitle { color: #8895b4; margin-bottom: 32px; font-size: 14px; }
+h2 { font-size: 16px; margin: 24px 0 12px; color: #c4cee8; }
+.options { display: flex; gap: 24px; flex-wrap: wrap; }
+.card { background: #1f2335; border: 1px solid #2a3045; border-radius: 10px; padding: 20px; width: 280px; }
+.card.selected { border-color: #5771e6; box-shadow: 0 0 0 1px #5771e6; }
+.card h3 { font-size: 14px; margin-bottom: 6px; }
+.card p { font-size: 12px; color: #8895b4; line-height: 1.5; margin-bottom: 14px; }
+.tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-right: 4px; }
+.tag.rec { background: #2d3b6e; color: #8eb1ff; }
+.btn { display: inline-block; padding: 6px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; border: none; margin-top: 8px; }
+.btn-primary { background: #5771e6; color: #fff; }
+.preview { position: relative; background: rgba(0,0,0,.25); border-radius: 10px; min-height: 200px; display: flex; align-items: center; justify-content: center; margin: 12px 0; }
+
+/* --- Menu item styles --- */
+.menu-item { position: absolute; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; transition: transform .15s, box-shadow .15s; }
+.menu-item:hover { transform: scale(1.08); }
+.menu-item .glyph { font-size: 20px; line-height: 1; }
+.menu-item .label { font-size: 9px; margin-top: 1px; white-space: nowrap; }
+
+/* Option A: Vertical left */
+.vert-item { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-radius: 8px; cursor: pointer; width: 160px; transition: background .15s; }
+.vert-item:hover { background: rgba(255,255,255,.06); }
+.vert-item .dot { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }
+.vert-item .info { flex: 1; }
+.vert-item .title { font-size: 13px; font-weight: 600; }
+.vert-item .hint { font-size: 10px; color: #8895b4; }
+
+/* Option B: Fan */
+.fan { position: relative; width: 100%; height: 180px; }
+
+/* Option C: Horizontal pill */
+.pill-row { display: flex; gap: 8px; }
+.pill { display: flex; align-items: center; gap: 6px; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; font-weight: 600; transition: transform .12s; }
+.pill:hover { transform: translateY(-2px); }
+
+/* Option D: Grid */
+.mini-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.grid-item { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 8px; cursor: pointer; }
+.grid-item:hover { background: rgba(255,255,255,.05); }
+.grid-item .dot { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; }
+
+/* Option E: Big arc */
+.big-arc { position: relative; width: 100%; height: 240px; }
+
+.note { background: #232840; border-left: 3px solid #5771e6; padding: 12px 16px; border-radius: 0 6px 6px 0; font-size: 13px; margin-top: 24px; }
+</style>
+</head>
+<body>
+
+<h1>径向菜单（右键菜单）重设计方案</h1>
+<p class="subtitle">当前：3 个圆形按钮在弧形上排列，间距较大但按钮偏小。连击可切换媒体卡片样式。</p>
+
+<h2>方案 A — 左侧竖排列表 <span class="tag rec">推荐</span></h2>
+<div class="options">
+<div class="card selected">
+<h3>A1 · 带描述竖排</h3>
+<p>左侧竖排，每行带文字和副标题，清晰直观</p>
+<div class="preview" style="justify-content:flex-start; padding:16px;">
+  <div style="display:flex;flex-direction:column;gap:4px;">
+    <div class="vert-item">
+      <div class="dot" style="background:rgba(170,150,210,.25);color:#c8b8f0;">◈</div>
+      <div class="info"><div class="title">聊天</div><div class="hint">打开角色对话</div></div>
+    </div>
+    <div class="vert-item">
+      <div class="dot" style="background:rgba(210,150,170,.25);color:#e8b0c8;">✦</div>
+      <div class="info"><div class="title">换装</div><div class="hint">更改角色服装</div></div>
+    </div>
+    <div class="vert-item">
+      <div class="dot" style="background:rgba(130,190,170,.25);color:#b0d8c8;">◉</div>
+      <div class="info"><div class="title">天气</div><div class="hint">查看天气信息</div></div>
+    </div>
+    <div style="border-top:1px solid #2a3045;margin:4px 0;"></div>
+    <div class="vert-item">
+      <div class="dot" style="background:rgba(120,120,140,.2);color:#999;">🔒</div>
+      <div class="info"><div class="title">锁定</div><div class="hint">固定桌宠位置</div></div>
+    </div>
+  </div>
+</div>
+<p style="font-size:12px;color:#8895b4;margin-top:8px;">点击行触发对应功能，文字描述让用户不用猜图标含义</p>
+</div>
+
+<div class="card">
+<h3>A2 · 紧凑竖排</h3>
+<p>更紧凑的竖排，适合屏幕空间有限的场景</p>
+<div class="preview" style="justify-content:flex-start; padding:16px;">
+  <div style="display:flex;flex-direction:column;gap:2px;">
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:13px;width:120px;"
+         onmouseover="this.style.background='rgba(170,150,210,.15)'" onmouseout="this.style.background='transparent'">
+      <span style="color:#c8b8f0;font-size:14px;">◈</span> 聊天
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:13px;width:120px;"
+         onmouseover="this.style.background='rgba(210,150,170,.15)'" onmouseout="this.style.background='transparent'">
+      <span style="color:#e8b0c8;font-size:14px;">✦</span> 换装
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:13px;width:120px;"
+         onmouseover="this.style.background='rgba(130,190,170,.15)'" onmouseout="this.style.background='transparent'">
+      <span style="color:#b0d8c8;font-size:14px;">◉</span> 天气
+    </div>
+  </div>
+</div>
+<p style="font-size:12px;color:#8895b4;margin-top:8px;">每行 30px 高，3 个按钮仅占 ~100px</p>
+</div>
+</div>
+
+<h2>方案 B — 水平排列</h2>
+<div class="options">
+<div class="card">
+<h3>B1 · 药丸横排</h3>
+<p>3 个胶囊按钮水平排列在桌宠上方或侧边</p>
+<div class="preview">
+  <div class="pill-row">
+    <div class="pill" style="background:rgba(170,150,210,.2);color:#c8b8f0;">◈ 聊天</div>
+    <div class="pill" style="background:rgba(210,150,170,.2);color:#e8b0c8;">✦ 换装</div>
+    <div class="pill" style="background:rgba(130,190,170,.2);color:#b0d8c8;">◉ 天气</div>
+  </div>
+</div>
+<p style="font-size:12px;color:#8895b4;margin-top:8px;">水平排列，适合放在桌宠上方，视觉醒目</p>
+</div>
+
+<div class="card">
+<h3>B2 · 2×2 网格</h3>
+<p>2列2行的小网格</p>
+<div class="preview">
+  <div class="mini-grid">
+    <div class="grid-item" style="background:rgba(170,150,210,.12);">
+      <div class="dot" style="background:rgba(170,150,210,.25);color:#c8b8f0;">◈</div>
+      <span style="font-size:13px;font-weight:600;">聊天</span>
+    </div>
+    <div class="grid-item" style="background:rgba(210,150,170,.12);">
+      <div class="dot" style="background:rgba(210,150,170,.25);color:#e8b0c8;">✦</div>
+      <span style="font-size:13px;font-weight:600;">换装</span>
+    </div>
+    <div class="grid-item" style="background:rgba(130,190,170,.12);">
+      <div class="dot" style="background:rgba(130,190,170,.25);color:#b0d8c8;">◉</div>
+      <span style="font-size:13px;font-weight:600;">天气</span>
+    </div>
+    <div class="grid-item" style="background:rgba(120,140,180,.12);">
+      <div class="dot" style="background:rgba(120,140,180,.25);color:#aaa;">更多</div>
+      <span style="font-size:13px;font-weight:600;">···</span>
+    </div>
+  </div>
+</div>
+<p style="font-size:12px;color:#8895b4;margin-top:8px;">紧凑网格，可容纳更多按钮</p>
+</div>
+</div>
+
+<h2>方案 C — 优化弧形</h2>
+<div class="options">
+<div class="card">
+<h3>C1 · 大间距弧形</h3>
+<p>保持弧形但增大按钮、拉开间距</p>
+<div style="width:240px;height:200px;position:relative;margin:0 auto;">
+  <!-- center point at (120, 100) -->
+  <div style="position:absolute;left:88px;top:10px;width:64px;height:64px;border-radius:50%;background:rgba(170,150,210,.2);border:2px solid rgba(170,150,210,.35);display:flex;flex-direction:column;align-items:center;justify-content:center;">
+    <span style="color:#c8b8f0;font-size:22px;">◈</span>
+    <span style="font-size:9px;color:#c8b8f0;">聊天</span>
+  </div>
+  <div style="position:absolute;left:40px;top:68px;width:64px;height:64px;border-radius:50%;background:rgba(210,150,170,.2);border:2px solid rgba(210,150,170,.35);display:flex;flex-direction:column;align-items:center;justify-content:center;">
+    <span style="color:#e8b0c8;font-size:22px;">✦</span>
+    <span style="font-size:9px;color:#e8b0c8;">换装</span>
+  </div>
+  <div style="position:absolute;left:136px;top:68px;width:64px;height:64px;border-radius:50%;background:rgba(130,190,170,.2);border:2px solid rgba(130,190,170,.35);display:flex;flex-direction:column;align-items:center;justify-content:center;">
+    <span style="color:#b0d8c8;font-size:22px;">◉</span>
+    <span style="font-size:9px;color:#b0d8c8;">天气</span>
+  </div>
+</div>
+<p style="font-size:12px;color:#8895b4;margin-top:8px;">64px 大圆按钮（当前 80px），2px 边框，下方带文字</p>
+</div>
+
+<div class="card">
+<h3>C2 · 不对称环形</h3>
+<p>聊天按钮更大更突出，其他两个稍小</p>
+<div style="width:240px;height:220px;position:relative;margin:0 auto;">
+  <div style="position:absolute;left:80px;top:20px;width:80px;height:80px;border-radius:50%;background:rgba(170,150,210,.25);border:2.5px solid rgba(170,150,210,.4);display:flex;flex-direction:column;align-items:center;justify-content:center;">
+    <span style="color:#c8b8f0;font-size:26px;">◈</span>
+    <span style="font-size:10px;color:#c8b8f0;">聊天</span>
+  </div>
+  <div style="position:absolute;left:36px;top:104px;width:52px;height:52px;border-radius:50%;background:rgba(210,150,170,.2);border:1.5px solid rgba(210,150,170,.3);display:flex;flex-direction:column;align-items:center;justify-content:center;">
+    <span style="color:#e8b0c8;font-size:17px;">✦</span>
+    <span style="font-size:8px;color:#e8b0c8;">换装</span>
+  </div>
+  <div style="position:absolute;left:152px;top:104px;width:52px;height:52px;border-radius:50%;background:rgba(130,190,170,.2);border:1.5px solid rgba(130,190,170,.3);display:flex;flex-direction:column;align-items:center;justify-content:center;">
+    <span style="color:#b0d8c8;font-size:17px;">◉</span>
+    <span style="font-size:8px;color:#b0d8c8;">天气</span>
+  </div>
+</div>
+<p style="font-size:12px;color:#8895b4;margin-top:8px;">聊天 80px 突出，换装/天气 52px 次要</p>
+</div>
+</div>
+
+<div class="note">
+  <strong>当前实现：</strong>3 个 80×80 圆形按钮排列在左侧弧形上（有媒体卡片时），或均匀分布在一圈上（无媒体时）。<br>
+  推荐 <strong>A1（左侧竖排）</strong>——最清晰直观，代码改动量小，替换 <code>_layout_left_crescent</code> 的弧形排列即可。
+</div>
+
+<p style="margin-top:24px;color:#556;font-size:12px;">选择方案后直接实施到 radial_menu.py 的布局逻辑</p>
+
+</body>
+</html>

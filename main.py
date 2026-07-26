@@ -5,6 +5,7 @@ import subprocess
 import threading
 
 from process_utils import app_base_dir, ipc_server_name, process_program_and_args
+from fluent_bootstrap import apply_qt_font_fallback
 
 BASE_DIR = str(app_base_dir())
 
@@ -12,7 +13,7 @@ _log_path = os.path.join(BASE_DIR, "bandori_error.log")
 sys.stderr = open(_log_path, "w", encoding="utf-8", buffering=1)
 TTS_BACKEND_DIR = os.path.join(BASE_DIR, "backend", "Qwen3TTS-0.6b-API")
 
-from PySide6.QtCore import Qt, QObject, QProcess, Signal
+from PySide6.QtCore import Qt, QObject, QProcess, QTimer, Signal
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from shiboken6 import isValid
 from PySide6.QtGui import QIcon, QGuiApplication
@@ -26,7 +27,7 @@ from i18n_manager import set_language, detect_system_language, tr as _tr
 from app_theme import apply_app_theme
 from ai_status_server import AiStatusHttpServer
 from chat_integration_server import ChatIntegrationHttpServer
-from database_manager import DatabaseManager
+from tray_menu_style import apply_compact_tray_menu_style
 
 
 class AiEventBridge(QObject):
@@ -60,6 +61,7 @@ def main():
     )
 
     app = QApplication(sys.argv)
+    apply_qt_font_fallback(app)
 
     # Single-instance guard: if another instance is already running, signal it and exit.
     _probe = QLocalSocket()
@@ -112,7 +114,7 @@ def main():
         tray_icon.setIcon(QIcon(icon_path) if os.path.exists(icon_path) else QIcon())
         tray_icon.setToolTip(_tr("MainTray.tooltip"))
 
-        menu = QMenu()
+        menu = apply_compact_tray_menu_style(QMenu())
         settings_action = menu.addAction(_tr("MainTray.settings"))
         settings_action.triggered.connect(lambda: launch_settings_process(show_launch=False))
         exit_action = menu.addAction(_tr("MainTray.exit"))
@@ -122,6 +124,11 @@ def main():
         tray_icon.show()
 
     def start_ssh_tunnel():
+        if not bool(cfg.get("tts_enabled", False)):
+            return
+        api_url = str(cfg.get("tts_api_url", "") or "").strip().lower()
+        if api_url and "127.0.0.1" not in api_url and "localhost" not in api_url:
+            return
         try:
             from ssh_tunnel import start as _ssh_start
             if not _ssh_start():
@@ -180,8 +187,14 @@ def main():
         socket.flush()
 
     def broadcast_ipc_line(line: str):
+        # Encode once per broadcast instead of once per client (LIP lines
+        # arrive at lip-sync rate during TTS playback).
+        payload = (line + "\n").encode("utf-8")
         for socket in list(ipc_ref.get("clients", [])):
-            write_ipc_line(socket, line)
+            if not isValid(socket) or not socket.isOpen():
+                continue
+            socket.write(payload)
+            socket.flush()
 
     ai_event_bridge.line_received.connect(broadcast_ipc_line)
 
@@ -212,6 +225,8 @@ def main():
             return False
 
     def start_tts_backend():
+        if not bool(cfg.get("tts_enabled", False)):
+            return
         api_url = str(cfg.get("tts_api_url", "") or "").strip()
         if api_url and "127.0.0.1" not in api_url and "localhost" not in api_url:
             return
@@ -225,7 +240,7 @@ def main():
         try:
             proc = subprocess.Popen(
                 [python_exe, "api-qwen.py", "-m", "./Qwen3-TTS-12Hz-0.6B-Base",
-                 "-a", "0.0.0.0", "-p", "9880",
+                 "-a", "127.0.0.1", "-p", "9880",
                  "-sm", "normal", "-mt", "ogg", "-cs", "4"],
                 cwd=TTS_BACKEND_DIR,
                 creationflags=CREATE_NO_WINDOW,
@@ -252,11 +267,16 @@ def main():
             pass
 
     def init_ai_status_server():
-        stop_ai_status_server()
-        if not cfg.get("ai_status_port_enabled", False):
-            return
+        enabled = bool(cfg.get("ai_status_port_enabled", False))
         port = _clamp_ai_status_port(cfg.get("ai_status_port", 38472))
         token = str(cfg.get("ai_status_token", "") or "")
+        config_key = (enabled, port, token)
+        if enabled and _server_config_unchanged(ai_status_ref, config_key):
+            return  # unrelated settings change — keep the running server
+        ai_status_ref["config_key"] = config_key
+        stop_ai_status_server()
+        if not enabled:
+            return
 
         def on_ai_event(event: dict):
             payload = json.dumps(event, ensure_ascii=False)
@@ -273,6 +293,9 @@ def main():
     def chat_integration_db():
         db = chat_integration_ref.get("db")
         if db is None:
+            # Deferred import: database_manager (sqlite3 + 1200 lines) is only
+            # needed once chat-integration HTTP requests actually arrive.
+            from database_manager import DatabaseManager
             db = DatabaseManager()
             chat_integration_ref["db"] = db
         return db
@@ -337,11 +360,16 @@ def main():
         return result
 
     def init_chat_integration_server():
-        stop_chat_integration_server()
-        if not cfg.get("chat_integration_enabled", False):
-            return
+        enabled = bool(cfg.get("chat_integration_enabled", False))
         port = _clamp_ai_status_port(cfg.get("chat_integration_port", 38473))
         token = str(cfg.get("chat_integration_token", "") or "")
+        config_key = (enabled, port, token)
+        if enabled and _server_config_unchanged(chat_integration_ref, config_key):
+            return  # unrelated settings change — keep the running server
+        chat_integration_ref["config_key"] = config_key
+        stop_chat_integration_server()
+        if not enabled:
+            return
         try:
             server = ChatIntegrationHttpServer(
                 port,
@@ -370,13 +398,7 @@ def main():
             handle_ipc_line(raw_line.rstrip("\r\n"))
 
     def handle_ipc_line(line: str):
-        if line.startswith("ACTION\t") or line.startswith("LIP\t"):
-            broadcast_ipc_line(line)
-        elif line.startswith("AI_EVENT\t"):
-            broadcast_ipc_line(line)
-        elif line.startswith("CHAT_EVENT\t"):
-            broadcast_ipc_line(line)
-        elif line.startswith("SCALE_PREVIEW\t"):
+        if line.startswith(("ACTION\t", "LIP\t", "AI_EVENT\t", "CHAT_EVENT\t", "SCALE_PREVIEW\t")):
             broadcast_ipc_line(line)
         elif line.startswith("MODEL\t") or line.startswith("SETTINGS\t") or line == "LAUNCH":
             handle_settings_line(line)
@@ -576,7 +598,10 @@ def main():
             "chat_integration_token",
             pet_window_ref.get("chat_integration_token", cfg.get("chat_integration_token", "")),
         )
-        cfg.load()
+        # NOTE: no cfg.load() here — the only caller (handle_settings_line)
+        # reloads the config immediately before invoking this handler, and
+        # nothing runs in between; a second load would just re-parse and
+        # re-normalize config.json for nothing.
         if language:
             cfg.set("language", language)
         cfg.set("fps", pet_window_ref["fps"])
@@ -613,6 +638,11 @@ def main():
         cfg.save()
         init_ai_status_server()
         init_chat_integration_server()
+
+    def _server_config_unchanged(ref: dict, key: tuple) -> bool:
+        """True if the server is running and its (enabled, port, token) config
+        is identical — restarting it would only cause a brief listen outage."""
+        return ref.get("server") is not None and ref.get("config_key") == key
 
     def launch_pet():
         # Skip redundant load-save cycle on cold start
@@ -790,16 +820,22 @@ def main():
             return
         _start_settings_process(show_launch=show_launch, hidden=False)
 
+    def _send_cmd_to_settings(cmd: bytes):
+        p = settings_process_ref.get("process")
+        if p is not None and p.state() != QProcess.ProcessState.NotRunning:
+            p.write(cmd)
+            p.waitForBytesWritten(100)
+
     def _launch_settings_from_pet(start_on_costumes=False):
         existing = settings_process_ref.get("process")
         if existing is not None and existing.state() != QProcess.ProcessState.NotRunning:
-            if start_on_costumes:
-                existing.write(b"SHOW_COSTUMES\n")
-            else:
-                existing.write(b"SHOW\n")
-            existing.waitForBytesWritten(200)
+            cmd = b"SHOW_COSTUMES\n" if start_on_costumes else b"SHOW\n"
+            existing.write(cmd)
+            existing.waitForBytesWritten(100)
             return
-        _start_settings_process(show_launch=False, hidden=False, start_on_costumes=start_on_costumes)
+        _start_settings_process(show_launch=False, hidden=True, start_on_costumes=start_on_costumes)
+        cmd = b"SHOW_COSTUMES\n" if start_on_costumes else b"SHOW\n"
+        QTimer.singleShot(300, lambda c=cmd: _send_cmd_to_settings(c))
 
     def prewarm_settings_process():
         existing = settings_process_ref.get("process")
@@ -820,8 +856,8 @@ def main():
     init_chat_integration_server()
     start_ssh_tunnel()   # must run before start_tts_backend so port check sees the tunnel
     start_tts_backend()
-    from PySide6.QtCore import QTimer as _QTimer
-    _QTimer.singleShot(800, prewarm_settings_process)
+    # Pre-warming disabled: always launch fresh for reliable direct page navigation
+    # _QTimer.singleShot(800, prewarm_settings_process)
 
     app.aboutToQuit.connect(save_config)
     app.aboutToQuit.connect(stop_ai_status_server)

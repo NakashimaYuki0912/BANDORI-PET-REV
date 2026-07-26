@@ -69,6 +69,22 @@ class GPTSoVITSTest(unittest.TestCase):
 
 
 class TtsCacheTest(unittest.TestCase):
+    def test_daily_chat_replaces_legacy_click_lines_but_preserves_startup(self):
+        greetings = {
+            "daily_chat": [
+                {"text": f"daily {index}", "motion": "natural01"}
+                for index in range(12)
+            ],
+            "startup_greeting": ["legacy startup"],
+            "click_responses": [{"lines": ["legacy click"]}],
+            "tiers": [{"lines": ["legacy tier"]}],
+        }
+
+        self.assertEqual(
+            collect_greeting_tts_lines(greetings),
+            ["legacy startup", *[f"daily {index}" for index in range(12)]],
+        )
+
     def test_collects_startup_click_and_tiers_in_order_deduped(self):
         greetings = {
             "startup_greeting": ["hello", "world"],

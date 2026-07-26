@@ -2798,6 +2798,7 @@ class SettingsWindow(QWidget):
         char_key = self._selected_list_character
         if not char_key:
             return
+        self._ensure_live2d_preview_module()
         self._editing_list_character = char_key
         self._editing_model_index = next(
             (
@@ -7343,6 +7344,8 @@ class SettingsWindow(QWidget):
                 if btn.costume_id == default_id:
                     btn.setChecked(True)
                     self._selected_costume = default_id
+                    # Auto-trigger live2d preview for the default costume
+                    QTimer.singleShot(100, lambda b=btn, c=default_id: self._show_costume_preview(b, c))
                     break
 
     def _on_costume_clicked(self, btn: CostumeItem, costume_id: str):

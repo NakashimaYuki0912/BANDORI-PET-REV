@@ -5,17 +5,18 @@ from process_utils import ipc_server_name
 
 _socket: QLocalSocket | None = None
 _pending: list[bytes] = []
+_CONNECTED = QLocalSocket.LocalSocketState.ConnectedState
 
 
 def _ensure_socket():
     global _socket
-    if _socket is not None and _socket.state() == QLocalSocket.LocalSocketState.ConnectedState:
+    if _socket is not None and _socket.state() == _CONNECTED:
         return
     if _socket is None:
         _socket = QLocalSocket()
         _socket.disconnected.connect(_on_disconnected)
         _socket.errorOccurred.connect(_on_error)
-    if _socket.state() != QLocalSocket.LocalSocketState.ConnectedState:
+    if _socket.state() != _CONNECTED:
         _socket.connectToServer(ipc_server_name())
         # Non-blocking: OS will connect asynchronously
 
@@ -30,7 +31,7 @@ def _on_error(_error):
 
 def _write(data: bytes):
     _ensure_socket()
-    if _socket.state() == QLocalSocket.LocalSocketState.ConnectedState:
+    if _socket.state() == _CONNECTED:
         _socket.write(data)
         _socket.flush()
     else:

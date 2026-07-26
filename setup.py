@@ -62,17 +62,25 @@ def include_package_dir(package_name: str, dest_path: str | None = None) -> tupl
     return str(package_dir), dest_path or f"lib/{package_name}"
 
 
-def _luajit_executable() -> str:
+def _luajit_executable() -> str | None:
     luajit = shutil.which("luajit")
     if luajit:
         return luajit
-    raise RuntimeError("luajit executable was not found in PATH")
+    luajit = shutil.which("luajit.exe")
+    if luajit:
+        return luajit
+    return None
 
 
 def _compiled_lua_include(path: str, dest_path: str | None = None) -> tuple[str, str] | None:
     src = BASE_DIR / path
     if not src.exists():
         return None
+
+    luajit = _luajit_executable()
+    if luajit is None:
+        # Fall back to raw .lua file when luajit is not available
+        return str(src), (dest_path or path)
 
     relative = Path(dest_path or path)
     compiled_dest = relative.with_suffix(".ljbc")
@@ -81,7 +89,7 @@ def _compiled_lua_include(path: str, dest_path: str | None = None) -> tuple[str,
 
     if not compiled_src.exists() or src.stat().st_mtime_ns > compiled_src.stat().st_mtime_ns:
         subprocess.run(
-            [_luajit_executable(), "-b", str(src), str(compiled_src)],
+            [luajit, "-b", str(src), str(compiled_src)],
             check=True,
             cwd=BASE_DIR,
         )

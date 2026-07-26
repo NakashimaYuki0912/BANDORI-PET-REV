@@ -1,6 +1,6 @@
 import fluent_bootstrap  # noqa: F401
 from PySide6.QtCore import Qt, QObject, QThread, Signal, QTimer, QPropertyAnimation, QEasingCurve, QEvent, QRect, QRectF, QSize, QVariantAnimation, QParallelAnimationGroup, QRunnable, QThreadPool
-from PySide6.QtGui import QFont, QColor, QPalette, QIcon, QKeyEvent, QPainter, QPainterPath, QPen, QPixmap, QImage, QRegion
+from PySide6.QtGui import QFont, QColor, QPalette, QIcon, QKeyEvent, QPainter, QPainterPath, QPen, QPixmap, QImage, QRegion, QTextDocument
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QTextEdit, QScrollArea, QSizePolicy, QToolButton, QMenu,
@@ -156,6 +156,12 @@ from win32_constants import (
     DWMWCP_DONOTROUND, DWMWA_COLOR_NONE,
 )
 _TTS_SENT_CUT_RE = re.compile(r'[。！？][」』""\'\'）\)]*|[.!?]+(?=\s|$)|\n+')
+# Precompiled hot-path patterns (used per streamed chunk during TTS cleanup).
+_TTS_PARTIAL_TAG_RE = re.compile(r"\[[A-Za-z0-9_.\-]*")
+_TTS_TAG_NAME_RE = re.compile(r"[A-Za-z0-9_.\-]+")
+_INLINE_SOURCES_TAIL_RE = re.compile(
+    r"\{\s*\"(?:web_search_sources|search_sources|sources)\"\s*:\s*\[.*", re.S
+)
 
 if os.name == "nt":
     _dwmapi = ctypes.windll.dwmapi
@@ -1190,12 +1196,20 @@ class ChatImagePreview(QWidget):
             clipped = QPainterPath()
             clipped.addRoundedRect(rect.adjusted(1, 1, -1, -1), 9, 9)
             painter.setClipPath(clipped)
-            scaled = self._pixmap.scaled(
-                max(1, int(rect.width())),
-                max(1, int(rect.height())),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
+            # Smooth-scaling the full-resolution source on every repaint is
+            # expensive; cache the scaled pixmap keyed by the target size.
+            target_size = (max(1, int(rect.width())), max(1, int(rect.height())))
+            cached = getattr(self, "_scaled_pixmap_cache", None)
+            if cached is not None and cached[0] == target_size:
+                scaled = cached[1]
+            else:
+                scaled = self._pixmap.scaled(
+                    target_size[0],
+                    target_size[1],
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+                self._scaled_pixmap_cache = (target_size, scaled)
             x = int(rect.left() + (rect.width() - scaled.width()) / 2)
             y = int(rect.top() + (rect.height() - scaled.height()) / 2)
             painter.drawPixmap(x, y, scaled)
@@ -1413,8 +1427,14 @@ class MessageBubble(QWidget):
 
     @staticmethod
     def _plain_text_height(label: QLabel, width: int, wrap: bool = True) -> int:
-        from PySide6.QtGui import QTextDocument
+        # Called ~36x/s during streaming (3 labels per 28ms flush tick).
+        # Cache the last measurement per label: unchanged (text, font, width)
+        # skips a full QTextDocument layout pass.
         text = label.text() or " "
+        key = (text, label.font().key(), width if wrap else -1)
+        cached = getattr(label, "_plain_height_cache", None)
+        if cached is not None and cached[0] == key:
+            return cached[1]
         doc = QTextDocument()
         doc.setDefaultFont(label.font())
         doc.setPlainText(text)
@@ -1423,7 +1443,9 @@ class MessageBubble(QWidget):
         else:
             doc.setTextWidth(-1)
         h = math.ceil(doc.size().height())
-        return max(label.fontMetrics().lineSpacing(), h) + 2
+        result = max(label.fontMetrics().lineSpacing(), h) + 2
+        label._plain_height_cache = (key, result)
+        return result
 
     def _sync_text_label_heights(self, text_width: int, reasoning_text_width: int, wrap_main: bool):
         self._label.setFixedHeight(self._plain_text_height(self._label, text_width, wrap_main))
@@ -4878,7 +4900,7 @@ class ChatWindow(QWidget):
 
     def _clean_tts_payload(self, text: str) -> str:
         text, _ = extract_inline_search_sources(text)
-        text = re.sub(r"\{\s*\"(?:web_search_sources|search_sources|sources)\"\s*:\s*\[.*", "", text, flags=re.S)
+        text = _INLINE_SOURCES_TAIL_RE.sub("", text)
         return strip_tts_action_tags(text).strip()
 
     def _tts_should_translate(self) -> bool:
@@ -4901,7 +4923,7 @@ class ChatWindow(QWidget):
             end = source.find("]", i + 1)
             if end < 0:
                 fragment = source[i:]
-                if re.fullmatch(r"\[[A-Za-z0-9_.\-]*", fragment):
+                if _TTS_PARTIAL_TAG_RE.fullmatch(fragment):
                     self._tts_tag_buffer = fragment
                 else:
                     output.append(source[i])
@@ -4909,7 +4931,7 @@ class ChatWindow(QWidget):
                 break
 
             tag = source[i + 1:end]
-            if tag == "DONE" or re.fullmatch(r"[A-Za-z0-9_.\-]+", tag):
+            if tag == "DONE" or _TTS_TAG_NAME_RE.fullmatch(tag):
                 i = end + 1
                 continue
             output.append(source[i:end + 1])
