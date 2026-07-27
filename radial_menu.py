@@ -968,14 +968,34 @@ class MediaRadialItem(QFrame):
             painter.drawRoundedRect(lower_scrim_rect, 8, 8)
         painter.restore()
 
-    def _map_image_source_rect(self, panel_rect: QRect, source_rect: QRectF, image_rect: QRectF) -> QRectF:
-        scale_x = panel_rect.width() / source_rect.width()
-        scale_y = panel_rect.height() / source_rect.height()
+    def _image_source_target_rect(self, panel_rect: QRect, source_rect: QRectF) -> QRectF:
+        """Return a centered, aspect-preserving target rect for a card image.
+
+        The source artwork includes circular playback controls.  Scaling it to
+        the card independently on each axis turns those circles into ovals, so
+        use cover scaling and let the existing rounded card clip the overflow.
+        """
+        scale = max(
+            panel_rect.width() / source_rect.width(),
+            panel_rect.height() / source_rect.height(),
+        )
+        target_width = source_rect.width() * scale
+        target_height = source_rect.height() * scale
         return QRectF(
-            panel_rect.left() + (image_rect.left() - source_rect.left()) * scale_x,
-            panel_rect.top() + (image_rect.top() - source_rect.top()) * scale_y,
-            image_rect.width() * scale_x,
-            image_rect.height() * scale_y,
+            panel_rect.center().x() - target_width / 2,
+            panel_rect.center().y() - target_height / 2,
+            target_width,
+            target_height,
+        )
+
+    def _map_image_source_rect(self, panel_rect: QRect, source_rect: QRectF, image_rect: QRectF) -> QRectF:
+        target_rect = self._image_source_target_rect(panel_rect, source_rect)
+        scale = target_rect.width() / source_rect.width()
+        return QRectF(
+            target_rect.left() + (image_rect.left() - source_rect.left()) * scale,
+            target_rect.top() + (image_rect.top() - source_rect.top()) * scale,
+            image_rect.width() * scale,
+            image_rect.height() * scale,
         )
 
     def _layout_children(self):
@@ -1235,7 +1255,11 @@ class MediaRadialItem(QFrame):
         image_pixmap = _media_card_pixmap(style) if image_spec is not None else None
         if image_spec is not None and image_pixmap is not None and not image_pixmap.isNull():
             _play_filename, _pause_filename, source_rect, _pause_rect = image_spec
-            painter.drawPixmap(QRectF(panel_rect), image_pixmap, source_rect)
+            painter.drawPixmap(
+                self._image_source_target_rect(panel_rect, source_rect),
+                image_pixmap,
+                source_rect,
+            )
             self._draw_image_text_scrim(painter, panel_rect, style)
             self._draw_image_pause_patch(painter, panel_rect, style)
             painter.restore()

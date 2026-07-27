@@ -1,11 +1,17 @@
 """Tests for MediaRadialItem widget and RadialMenu media integration."""
 import unittest
+from unittest.mock import patch
 
-from PySide6.QtCore import QPoint, QSize, Qt
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QPoint, QRectF, QSize, Qt
+from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication
 
-from radial_menu import MediaRadialItem, RadialMenu, _media_icon
+from radial_menu import (
+    MediaRadialItem,
+    RadialMenu,
+    _MEDIA_CARD_IMAGE_SPECS,
+    _media_icon,
+)
 
 
 _STYLES = ("sakura", "sky", "matcha", "ink", "sunset", "snow")
@@ -28,6 +34,26 @@ class MediaRadialItemStyleTest(unittest.TestCase):
                 w = MediaRadialItem(style=style)
                 self.assertIsNotNone(w)
                 w.deleteLater()
+
+    def test_image_skin_button_mapping_preserves_circle_aspect_ratio(self):
+        """Artwork containing circular controls must never be stretched."""
+        w = MediaRadialItem(style="sakura")
+        panel_rect = w._panel_rect()
+        try:
+            for style, (_play, _pause, source_rect, pause_rect) in _MEDIA_CARD_IMAGE_SPECS.items():
+                with self.subTest(style=style):
+                    target_rect = w._map_image_source_rect(
+                        panel_rect,
+                        source_rect,
+                        pause_rect,
+                    )
+                    self.assertAlmostEqual(
+                        target_rect.width() / pause_rect.width(),
+                        target_rect.height() / pause_rect.height(),
+                        places=6,
+                    )
+        finally:
+            w.deleteLater()
 
     def test_cute_style_sets_pink_themed_palette(self):
         w = MediaRadialItem(style="aurora")
@@ -272,6 +298,124 @@ class MediaRadialItemStyleTest(unittest.TestCase):
         near_bottom = image.pixelColor(w.width() // 2, w.height() - 8)
         self.assertGreater(near_bottom.alpha(), 180)
         w.deleteLater()
+
+
+class MediaRadialItemImageSkinRenderTest(unittest.TestCase):
+    """Verify image skin geometry through the actual QPainter rendering path."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._app = _app()
+
+    def test_image_skin_paint_keeps_circular_marker_round(self):
+        style = "sakura"
+        _play, _pause, source_rect, pause_rect = _MEDIA_CARD_IMAGE_SPECS[style]
+        source = QPixmap(1694, 929)
+        source.fill(Qt.GlobalColor.transparent)
+        marker_diameter = 240
+        marker_rect = QRectF(
+            pause_rect.center().x() - marker_diameter / 2,
+            pause_rect.center().y() - marker_diameter / 2,
+            marker_diameter,
+            marker_diameter,
+        )
+        painter = QPainter(source)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(255, 0, 0))
+        painter.drawEllipse(marker_rect)
+        painter.end()
+
+        with patch("radial_menu._media_card_pixmap", return_value=source):
+            w = MediaRadialItem(style=style)
+            w._draw_image_text_scrim = lambda *_args: None
+            w.move(-10000, -10000)
+            w.show()
+            self._app.processEvents()
+            rendered = w.grab().toImage()
+            expected = w._map_image_source_rect(
+                w._panel_rect(),
+                source_rect,
+                marker_rect,
+            )
+            w.hide()
+            w.deleteLater()
+
+        pixels = [
+            (x, y)
+            for y in range(rendered.height())
+            for x in range(rendered.width())
+            if (
+                rendered.pixelColor(x, y).red() > 240
+                and rendered.pixelColor(x, y).green() < 20
+                and rendered.pixelColor(x, y).blue() < 20
+            )
+        ]
+        self.assertTrue(pixels)
+        left, right = min(x for x, _y in pixels), max(x for x, _y in pixels)
+        top, bottom = min(y for _x, y in pixels), max(y for _x, y in pixels)
+        self.assertAlmostEqual(right - left, bottom - top, delta=1.0)
+        self.assertAlmostEqual((left + right) / 2, expected.center().x(), delta=1.0)
+        self.assertAlmostEqual((top + bottom) / 2, expected.center().y(), delta=1.0)
+
+    def test_image_skin_pause_patch_keeps_circular_marker_round(self):
+        style = "sky"
+        _play, _pause, source_rect, pause_rect = _MEDIA_CARD_IMAGE_SPECS[style]
+        play_source = QPixmap(1694, 929)
+        play_source.fill(Qt.GlobalColor.transparent)
+        pause_source = QPixmap(1694, 929)
+        pause_source.fill(Qt.GlobalColor.transparent)
+        marker_diameter = 70
+        marker_rect = QRectF(
+            pause_rect.center().x() - marker_diameter / 2,
+            pause_rect.center().y() - marker_diameter / 2,
+            marker_diameter,
+            marker_diameter,
+        )
+        painter = QPainter(pause_source)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(255, 0, 0))
+        painter.drawEllipse(marker_rect)
+        painter.end()
+
+        def media_pixmap(_style, variant="play"):
+            return pause_source if variant == "pause" else play_source
+
+        with patch("radial_menu._media_card_pixmap", side_effect=media_pixmap):
+            w = MediaRadialItem(style=style)
+            w._draw_image_text_scrim = lambda *_args: None
+            w.move(-10000, -10000)
+            w.show()
+            self._app.processEvents()
+            w._play_btn.set_media_icon("pause")
+            w.repaint()
+            self._app.processEvents()
+            rendered = w.grab().toImage()
+            expected = w._map_image_source_rect(
+                w._panel_rect(),
+                source_rect,
+                marker_rect,
+            )
+            w.hide()
+            w.deleteLater()
+
+        pixels = [
+            (x, y)
+            for y in range(rendered.height())
+            for x in range(rendered.width())
+            if (
+                rendered.pixelColor(x, y).red() > 240
+                and rendered.pixelColor(x, y).green() < 20
+                and rendered.pixelColor(x, y).blue() < 20
+            )
+        ]
+        self.assertTrue(pixels)
+        left, right = min(x for x, _y in pixels), max(x for x, _y in pixels)
+        top, bottom = min(y for _x, y in pixels), max(y for _x, y in pixels)
+        self.assertAlmostEqual(right - left, bottom - top, delta=1.0)
+        self.assertAlmostEqual((left + right) / 2, expected.center().x(), delta=1.0)
+        self.assertAlmostEqual((top + bottom) / 2, expected.center().y(), delta=1.0)
 
 
 class MediaRadialItemEmptyStateTest(unittest.TestCase):
