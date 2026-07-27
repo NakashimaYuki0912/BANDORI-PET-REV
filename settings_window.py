@@ -3270,10 +3270,26 @@ class SettingsWindow(QWidget):
         self._tts_reference_character.setFixedHeight(36)
         layout.addWidget(self._tts_reference_character)
 
+        tts_speed_label = BodyLabel(_tr("SettingsWindow.tts_speed_factor", "TTS 语速系数"), page)
+        layout.addWidget(tts_speed_label)
+        self._tts_speed_factor = FluentContextLineEdit(page)
+        self._tts_speed_factor.setPlaceholderText("0.92")
+        self._tts_speed_factor.setFixedHeight(36)
+        speed_validator = QDoubleValidator(0.50, 1.50, 2, self._tts_speed_factor)
+        speed_validator.setNotation(QDoubleValidator.Notation.StandardNotation)
+        self._tts_speed_factor.setValidator(speed_validator)
+        layout.addWidget(self._tts_speed_factor)
+        speed_hint = _wrap_label(BodyLabel(_tr(
+            "SettingsWindow.tts_speed_factor_hint",
+            "1.00 是服务器原始语速；数值越小越慢。默认 0.92，Layer / Lisa / CHU² 会自动使用各自的语音预设。",
+        ), page))
+        speed_hint.setWordWrap(True)
+        layout.addWidget(speed_hint)
+
         tts_temperature_label = BodyLabel(_tr("SettingsWindow.tts_temperature", "TTS 温度参数"), page)
         layout.addWidget(tts_temperature_label)
         self._tts_temperature = FluentContextLineEdit(page)
-        self._tts_temperature.setPlaceholderText("0.9")
+        self._tts_temperature.setPlaceholderText("0.6")
         self._tts_temperature.setFixedHeight(36)
         temp_validator = QDoubleValidator(0.01, 2.0, 2, self._tts_temperature)
         temp_validator.setNotation(QDoubleValidator.Notation.StandardNotation)
@@ -5766,6 +5782,7 @@ class SettingsWindow(QWidget):
                 "_tts_api_url",
                 "_tts_language",
                 "_tts_reference_character",
+                "_tts_speed_factor",
                 "_tts_temperature",
                 "_tts_streaming",
                 "_tts_translate_to_selected_language",
@@ -5865,6 +5882,7 @@ class SettingsWindow(QWidget):
             }}
         """
         self._tts_api_url.setStyleSheet(style)
+        self._tts_speed_factor.setStyleSheet(style)
         self._tts_temperature.setStyleSheet(style)
         if hasattr(self, "_tts_test_text"):
             self._tts_test_text.setStyleSheet(style)
@@ -6365,7 +6383,8 @@ class SettingsWindow(QWidget):
                 if self._tts_reference_character.itemData(i) == saved_ref:
                     self._tts_reference_character.setCurrentIndex(i)
                     break
-            self._tts_temperature.setText(str(self._cfg.get("tts_temperature", 0.9)))
+            self._tts_speed_factor.setText(str(self._cfg.get("tts_speed_factor", 0.92)))
+            self._tts_temperature.setText(str(self._cfg.get("tts_temperature", 0.6)))
             self._tts_streaming.setChecked(bool(self._cfg.get("tts_streaming", True)))
             self._tts_translate_to_selected_language.setChecked(bool(self._cfg.get("tts_translate_to_selected_language", True)))
             try:
@@ -6556,16 +6575,22 @@ class SettingsWindow(QWidget):
 
     def _current_tts_config(self, include_llm: bool = False) -> dict:
         try:
-            temperature = max(0.01, min(2.0, float(self._tts_temperature.text().strip() or "0.9")))
+            temperature = max(0.01, min(2.0, float(self._tts_temperature.text().strip() or "0.6")))
         except ValueError:
-            temperature = 0.9
+            temperature = 0.6
+        try:
+            speed_factor = max(0.50, min(1.50, float(self._tts_speed_factor.text().strip() or "0.92")))
+        except ValueError:
+            speed_factor = 0.92
         self._tts_temperature.setText(str(temperature))
+        self._tts_speed_factor.setText(str(speed_factor))
         config = {
             "tts_enabled": self._tts_enabled.isChecked(),
             "tts_api_url": self._tts_api_url.text().strip() or "http://127.0.0.1:9880/",
             "tts_language": self._tts_language.itemData(self._tts_language.currentIndex()) or "Chinese",
             "tts_reference_character": self._tts_reference_character.itemData(self._tts_reference_character.currentIndex()) or "",
             "tts_temperature": temperature,
+            "tts_speed_factor": speed_factor,
             "tts_streaming": self._tts_streaming.isChecked(),
             "tts_translate_to_selected_language": self._tts_translate_to_selected_language.isChecked(),
             "tts_volume": self._tts_volume_slider.value() / 100.0,

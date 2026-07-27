@@ -137,6 +137,84 @@ _GPT_SOVITS_SOVITS_FILES = {
 }
 
 
+# GPT-SoVITS v2 exposes sampling and playback-speed controls at inference
+# time. Keep the application's default slightly slower than the server's 1.0
+# default, then apply only the small character differences requested for the
+# desktop-pet voices. Users can still override any value via
+# ``tts_character_profiles`` in ConfigManager-managed configuration.
+_DEFAULT_TTS_VOICE_PROFILE = {
+    "speed_factor": 0.92,
+    "temperature": 0.60,
+    "top_k": 8,
+    "top_p": 0.88,
+    "repetition_penalty": 1.35,
+}
+
+_BUILTIN_TTS_CHARACTER_PROFILES = {
+    "rei": {"speed_factor": 0.89, "temperature": 0.58, "top_p": 0.85},
+    "lisa": {"speed_factor": 0.90, "temperature": 0.62, "top_k": 9},
+    "chu2": {"speed_factor": 0.96, "temperature": 0.76, "top_k": 12, "top_p": 0.92},
+}
+
+
+def _bounded_profile_float(value, default: float, minimum: float, maximum: float) -> float:
+    try:
+        return max(minimum, min(maximum, float(value)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _bounded_profile_int(value, default: int, minimum: int, maximum: int) -> int:
+    try:
+        return max(minimum, min(maximum, int(value)))
+    except (TypeError, ValueError):
+        return default
+
+
+def effective_tts_voice_profile(character: str, config: dict) -> dict[str, float | int]:
+    """Return the validated inference profile for a pet character.
+
+    The global speed and temperature settings are the normal user controls.
+    Character profiles provide gentle defaults for voices that need a distinct
+    pace or livelier sampling, and an optional saved profile wins last.
+    """
+    config = config if isinstance(config, dict) else {}
+    profile = dict(_DEFAULT_TTS_VOICE_PROFILE)
+    global_speed_factor = _bounded_profile_float(
+        config.get("tts_speed_factor", profile["speed_factor"]),
+        profile["speed_factor"],
+        0.50,
+        1.50,
+    )
+    profile["speed_factor"] = global_speed_factor
+    profile["temperature"] = config.get("tts_temperature", profile["temperature"])
+
+    character_key = str(character or "").strip().lower()
+    builtin_profile = _BUILTIN_TTS_CHARACTER_PROFILES.get(character_key, {})
+    builtin_speed_factor = builtin_profile.get("speed_factor")
+    if builtin_speed_factor is not None:
+        # Character profiles express a small pace difference from the default.
+        # Preserve that difference when the user changes the global slider.
+        profile["speed_factor"] = global_speed_factor + (
+            float(builtin_speed_factor) - _DEFAULT_TTS_VOICE_PROFILE["speed_factor"]
+        )
+    profile.update({key: value for key, value in builtin_profile.items() if key != "speed_factor"})
+
+    saved_profiles = config.get("tts_character_profiles", {})
+    if isinstance(saved_profiles, dict):
+        saved_profile = saved_profiles.get(character_key, {})
+        if isinstance(saved_profile, dict):
+            profile.update(saved_profile)
+
+    return {
+        "speed_factor": _bounded_profile_float(profile.get("speed_factor"), 0.92, 0.50, 1.50),
+        "temperature": _bounded_profile_float(profile.get("temperature"), 0.60, 0.01, 2.00),
+        "top_k": _bounded_profile_int(profile.get("top_k"), 8, 1, 100),
+        "top_p": _bounded_profile_float(profile.get("top_p"), 0.88, 0.05, 1.00),
+        "repetition_penalty": _bounded_profile_float(profile.get("repetition_penalty"), 1.35, 0.10, 3.00),
+    }
+
+
 def _remote_tts_root(config: dict) -> str:
     value = str(config.get("tts_gpt_sovits_remote_root", "") or "").strip()
     return (value or _GPT_SOVITS_REMOTE_ROOT).rstrip("/")
@@ -178,6 +256,10 @@ def _gpt_sovits_payload(
     reference_path: str,
     prompt_text: str,
     temperature: float,
+    speed_factor: float,
+    top_k: int,
+    top_p: float,
+    repetition_penalty: float,
 ) -> dict:
     return {
         "text": text,
@@ -185,9 +267,11 @@ def _gpt_sovits_payload(
         "ref_audio_path": reference_path,
         "prompt_text": prompt_text,
         "prompt_lang": "ja",
-        "top_k": 5,
-        "top_p": 1,
+        "top_k": top_k,
+        "top_p": top_p,
         "temperature": temperature,
+        "speed_factor": speed_factor,
+        "repetition_penalty": repetition_penalty,
         "text_split_method": "cut5",
         "batch_size": 1,
         "media_type": "wav",
@@ -376,10 +460,7 @@ def tts_cache_path(text: str, character: str, config: dict) -> pathlib.Path:
     raw_char = str(config.get("tts_reference_character", "") or "").strip() or character
     ref_char = (raw_char or "").strip().lower()
     language = str(config.get("tts_language", "Japanese") or "Japanese")
-    try:
-        temperature = str(max(0.01, min(2.0, float(config.get("tts_temperature", 0.9)))))
-    except (TypeError, ValueError):
-        temperature = "0.9"
+    profile = effective_tts_voice_profile(character, config)
     remote_root = _remote_tts_root(config)
     paths = _gpt_sovits_model_paths(ref_char, config)
     # Build a deterministic key from all inputs that affect the output audio
@@ -387,7 +468,11 @@ def tts_cache_path(text: str, character: str, config: dict) -> pathlib.Path:
         text,
         ref_char,
         language,
-        temperature,
+        str(profile["speed_factor"]),
+        str(profile["temperature"]),
+        str(profile["top_k"]),
+        str(profile["top_p"]),
+        str(profile["repetition_penalty"]),
         remote_root,
         paths.get("gpt", ""),
         paths.get("sovits", ""),
@@ -557,10 +642,7 @@ class TTSRequestWorker(QThread):
     def _generate_audio_bytes(self, text: str, text_language: str,
                               selected_language: str) -> bytes | None:
         """Prepare payload, switch weights, POST /tts — atomic under ``_tts_lock``."""
-        try:
-            temperature = max(0.01, min(2.0, float(self._config.get("tts_temperature", 0.9))))
-        except (TypeError, ValueError):
-            temperature = 0.9
+        profile = effective_tts_voice_profile(self._character, self._config)
         prompt_text = self._reference_prompt_text(selected_language)
         paths = _gpt_sovits_model_paths(self._reference_character(), self._config)
         payload = _gpt_sovits_payload(
@@ -568,7 +650,11 @@ class TTSRequestWorker(QThread):
             text_language=text_language,
             reference_path=paths["reference"],
             prompt_text=prompt_text,
-            temperature=temperature,
+            temperature=profile["temperature"],
+            speed_factor=profile["speed_factor"],
+            top_k=profile["top_k"],
+            top_p=profile["top_p"],
+            repetition_penalty=profile["repetition_penalty"],
         )
         with _tts_lock:
             self._ensure_gpt_sovits_weights(paths)
@@ -740,8 +826,7 @@ class CachedTTSRequestWorker(TTSRequestWorker):
         self._play_when_ready = play_when_ready
 
     def run(self):
-        ref_char = self._reference_character()
-        cache_path = tts_cache_path(self._text, ref_char, self._config)
+        cache_path = tts_cache_path(self._text, self._character, self._config)
 
         # Cache hit — return cached wav bytes (single stat instead of
         # exists() + stat())
