@@ -4,6 +4,7 @@ import unittest
 
 from tts_manager import (
     TTSRequestWorker,
+    _build_translation_system_prompt,
     _gpt_sovits_model_paths,
     _gpt_sovits_payload,
     _tts_api_language_code,
@@ -16,6 +17,17 @@ from tts_manager import (
 
 
 class GPTSoVITSTest(unittest.TestCase):
+    def test_aya_japanese_translation_uses_unambiguous_self_name(self):
+        prompt = _build_translation_system_prompt(
+            "日语",
+            "刚才彩又偷偷搜索了自己的名字。",
+            "aya",
+        )
+
+        self.assertIn("丸山彩 (Aya Maruyama)", prompt)
+        self.assertIn("写作「あや」", prompt)
+        self.assertIn("不要单独写「彩」", prompt)
+
     def test_builds_standard_remote_model_paths(self):
         paths = _gpt_sovits_model_paths("kaoru", {})
 

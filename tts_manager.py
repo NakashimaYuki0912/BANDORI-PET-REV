@@ -351,6 +351,18 @@ CHARACTER_TRILINGUAL_NAMES = {
 
 
 _ONE_CHAR_SURNAMES = frozenset({"凑", "要"})
+_TTS_TRANSLATION_FORMAT_VERSION = "speaker-name-guidance-v1"
+
+# A bare Japanese kanji can have a different dictionary reading from a
+# character's name.  Keep the speech spelling here so the translation prompt
+# can request unambiguous kana for the affected speaker.
+_SPEAKER_NAME_SPEECH_GUIDES = {
+    "aya": {
+        "display_name": "丸山彩 (Aya Maruyama)",
+        "ambiguous_name": "彩",
+        "speech_spelling": "あや",
+    },
+}
 
 
 def _find_referenced_characters(text: str) -> dict:
@@ -377,8 +389,23 @@ def _find_referenced_characters(text: str) -> dict:
     return matched
 
 
-def _build_translation_system_prompt(target_language_name: str, text: str = "") -> str:
+def _build_translation_system_prompt(
+    target_language_name: str,
+    text: str = "",
+    speaker_character: str = "",
+) -> str:
     referenced = _find_referenced_characters(text)
+    speaker_guide = _SPEAKER_NAME_SPEECH_GUIDES.get(
+        str(speaker_character or "").strip().lower()
+    )
+    speaker_instruction = ""
+    if speaker_guide and target_language_name == "日语":
+        speaker_instruction = (
+            f"\n当前说话角色是 {speaker_guide['display_name']}。为避免语音合成把"
+            f"「{speaker_guide['ambiguous_name']}」误读成其他词，日语译文中她的"
+            f"自称或单独名字必须写作「{speaker_guide['speech_spelling']}」，"
+            f"不要单独写「{speaker_guide['ambiguous_name']}」。"
+        )
     if referenced:
         appendix = "\n\n### BanG Dream! Character Name Reference (CN | JP | EN)\n"
         appendix += "\n".join(
@@ -388,8 +415,12 @@ def _build_translation_system_prompt(target_language_name: str, text: str = "") 
         return (
             f"把用户给出的中文聊天台词翻译成自然{target_language_name}，只输出译文，不要解释。保留语气，不要输出动作标签。"
             f"翻译人物名称时请参照以下对照表，按目标语言使用对应名称：\n{appendix}"
+            f"{speaker_instruction}"
         )
-    return f"把用户给出的中文聊天台词翻译成自然{target_language_name}，只输出译文，不要解释。保留语气，不要输出动作标签。"
+    return (
+        f"把用户给出的中文聊天台词翻译成自然{target_language_name}，只输出译文，不要解释。保留语气，不要输出动作标签。"
+        f"{speaker_instruction}"
+    )
 
 
 def strip_tts_action_tags(text: str) -> str:
@@ -476,6 +507,7 @@ def tts_cache_path(text: str, character: str, config: dict) -> pathlib.Path:
         remote_root,
         paths.get("gpt", ""),
         paths.get("sovits", ""),
+        _TTS_TRANSLATION_FORMAT_VERSION if _tts_should_translate(config, language) else "",
     ]
     key = "\n".join(key_parts)
     digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
@@ -536,7 +568,12 @@ def _tts_should_translate(config: dict, text_language: str) -> bool:
     return text_language not in {"Chinese", "zh", "中文"}
 
 
-def _tts_translate_to_selected_language(config: dict, text: str, target_language: str) -> str:
+def _tts_translate_to_selected_language(
+    config: dict,
+    text: str,
+    target_language: str,
+    speaker_character: str = "",
+) -> str:
     api_url = str(config.get("llm_aux_api_url", "") or "").strip() or str(config.get("llm_api_url", "") or "").strip()
     api_key = str(config.get("llm_aux_api_key", "") or "").strip() or str(config.get("llm_api_key", "") or "").strip()
     model_id = str(config.get("llm_aux_model_id", "") or "").strip() or str(config.get("llm_model_id", "") or "").strip()
@@ -545,7 +582,14 @@ def _tts_translate_to_selected_language(config: dict, text: str, target_language
     body = {
         "model": model_id,
         "messages": [
-            {"role": "system", "content": _build_translation_system_prompt(_tts_language_name(target_language), text)},
+            {
+                "role": "system",
+                "content": _build_translation_system_prompt(
+                    _tts_language_name(target_language),
+                    text,
+                    speaker_character,
+                ),
+            },
             {"role": "user", "content": text},
         ],
         "stream": False,
@@ -596,7 +640,9 @@ class TTSTranslationWorker(QThread):
             if not text:
                 return
             if _tts_should_translate(self._config, selected_language):
-                translated = _tts_translate_to_selected_language(self._config, text, selected_language)
+                translated = _tts_translate_to_selected_language(
+                    self._config, text, selected_language, self._character
+                )
                 if translated:
                     text = translated
             self.translated.emit(self.sequence, self.generation, text, self._character)
@@ -627,7 +673,9 @@ class TTSRequestWorker(QThread):
             if not text:
                 return
             if _tts_should_translate(self._config, selected_language):
-                translated = _tts_translate_to_selected_language(self._config, text, selected_language)
+                translated = _tts_translate_to_selected_language(
+                    self._config, text, selected_language, self._character
+                )
                 if translated:
                     text = translated
             audio_bytes = self._generate_audio_bytes(text, text_language, selected_language)
@@ -852,7 +900,9 @@ class CachedTTSRequestWorker(TTSRequestWorker):
             if not text:
                 return
             if _tts_should_translate(self._config, selected_language):
-                translated = _tts_translate_to_selected_language(self._config, text, selected_language)
+                translated = _tts_translate_to_selected_language(
+                    self._config, text, selected_language, self._character
+                )
                 if translated:
                     text = translated
 
