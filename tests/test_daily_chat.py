@@ -72,6 +72,19 @@ class DailyChatRuntimeTest(unittest.TestCase):
                 self.assertEqual(len(texts), 12)
                 self.assertEqual(len(set(texts)), 12)
 
+    def test_kokoro_and_aya_keep_their_japanese_signature_lines(self):
+        expected_lines = {
+            "kokoro": "ハッピー！ラッキー！スマイル！イェーイ！",
+            "aya": "まんまるお山に彩りを！丸山彩です！",
+        }
+
+        for key, expected_line in expected_lines.items():
+            with self.subTest(character=key):
+                path = PROJECT_ROOT / "characters" / key / "greetings.json"
+                greetings = json.loads(path.read_text(encoding="utf-8"))
+                texts = daily_chat_texts(greetings)
+                self.assertTrue(any(expected_line in text for text in texts))
+
 
 class DailyChatImporterTest(unittest.TestCase):
     def test_normalizes_stage_names_and_the_soyo_name_variant(self):
