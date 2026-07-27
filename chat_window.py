@@ -1809,6 +1809,7 @@ class ChatWindow(QWidget):
         self._tts_completed_sequences: set[int] = set()
         self._tts_generation = 0
         self._tts_next_sequence = 0
+        self._tts_next_request_sequence = 0
         self._tts_next_play_sequence = 0
         self._tts_playing_sequence: int | None = None
         self._tts_max_parallel = 1
@@ -4805,6 +4806,8 @@ class ChatWindow(QWidget):
             "tts_reference_character",
             "tts_streaming",
             "tts_temperature",
+            "tts_speed_factor",
+            "tts_character_profiles",
             "tts_translate_to_selected_language",
             "llm_api_url",
             "llm_api_key",
@@ -4835,6 +4838,7 @@ class ChatWindow(QWidget):
         self._tts_completed_sequences.clear()
         self._tts_generation += 1
         self._tts_next_sequence = 0
+        self._tts_next_request_sequence = 0
         self._tts_next_play_sequence = 0
         self._tts_playing_sequence = None
         if stop_player:
@@ -4939,12 +4943,20 @@ class ChatWindow(QWidget):
         return "".join(output)
 
     def _start_next_tts_request(self):
-        if self._tts_active_workers or self._tts_playing_sequence is not None or not self._tts_player.is_idle():
+        if len(self._tts_active_workers) >= self._tts_max_parallel:
             return
-        next_index = next((i for i, item in enumerate(self._tts_queue) if item[0] == self._tts_next_play_sequence), None)
+        # Request order and playback order deliberately differ: while sentence
+        # N is speaking, sentence N+1 can be synthesized into the existing
+        # ordered audio buffer. This hides remote inference latency without
+        # allowing more workers than the configured request limit.
+        next_index = next(
+            (i for i, item in enumerate(self._tts_queue) if item[0] == self._tts_next_request_sequence),
+            None,
+        )
         if next_index is None:
             return
         sequence, text, character = self._tts_queue.pop(next_index)
+        self._tts_next_request_sequence = sequence + 1
         config = self._tts_config_snapshot()
         config["tts_translate_to_selected_language"] = False
         worker = TTSRequestWorker(sequence, self._tts_generation, text, character, config, self)
