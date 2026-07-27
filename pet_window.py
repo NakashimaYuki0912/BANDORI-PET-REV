@@ -48,12 +48,14 @@ _tts_available = False
 _TTSPlayer = None
 _CachedTTSRequestWorker = None
 _collect_greeting_tts_lines = None
+_collect_greeting_tts_items = None
 _strip_tts_action_tags = None
 try:
     from tts_manager import (
         TTSPlayer as _TTSPlayer,
         CachedTTSRequestWorker as _CachedTTSRequestWorker,
         collect_greeting_tts_lines as _collect_greeting_tts_lines,
+        collect_greeting_tts_items as _collect_greeting_tts_items,
         strip_tts_action_tags as _strip_tts_action_tags,
         tts_cache_path as _tts_cache_path,
     )
@@ -2419,7 +2421,7 @@ class PetWindow(QWidget):
             if motion or expression:
                 self._start_click_motion(motion, expression)
             self._speech_bubble.show_text(text, anchor)
-            self._speak_pet_text(text)
+            self._speak_pet_text(text, entry.get("tts_text", text))
             return
 
         click_responses = greetings.get("click_responses", [])
@@ -3311,11 +3313,11 @@ class PetWindow(QWidget):
             except (TypeError, ValueError):
                 pass
 
-    def _speak_pet_text(self, text: str):
+    def _speak_pet_text(self, text: str, tts_text: str | None = None):
         """Request TTS for a pet bubble text, with caching."""
         if not self._tts_enabled():
             return
-        clean = (_strip_tts_action_tags or strip_tts_action_tags)(text)
+        clean = (_strip_tts_action_tags or strip_tts_action_tags)(tts_text or text)
         if not clean:
             return
         self._ensure_tts_player()
@@ -3326,6 +3328,9 @@ class PetWindow(QWidget):
         # Bump generation so any in-flight worker results are discarded
         self._tts_generation += 1
         config = self._tts_config_snapshot()
+        if tts_text:
+            config["tts_language"] = "Japanese"
+            config["tts_translate_to_selected_language"] = False
         char = self._current_char or ""
         generation = self._tts_generation
         worker = _CachedTTSRequestWorker(
@@ -3369,8 +3374,10 @@ class PetWindow(QWidget):
         if not _CachedTTSRequestWorker:
             return
         greetings = self._load_greetings()
-        lines = _collect_greeting_tts_lines(greetings)
-        if not lines:
+        items = (_collect_greeting_tts_items or _collect_greeting_tts_lines)(greetings)
+        if items and isinstance(items[0], str):
+            items = [(line, False) for line in items]
+        if not items:
             return
         char = self._current_char or ""
         config = self._tts_config_snapshot()
@@ -3385,26 +3392,30 @@ class PetWindow(QWidget):
         self._tts_prewarm_workers.clear()
 
         # Queue first line; subsequent lines are chained via worker.finished
-        if lines:
-            self._prewarm_next_line(lines, 0, char, config)
+        if items:
+            self._prewarm_next_line(items, 0, char, config)
 
-    def _prewarm_next_line(self, lines: list, idx: int, char: str, config: dict):
+    def _prewarm_next_line(self, items: list, idx: int, char: str, config: dict):
         """Process the next prewarm line (or stop if at end)."""
-        if idx >= len(lines):
+        if idx >= len(items):
             return
-        text = lines[idx]
-        cache_path = _tts_cache_path(text, char, config) if _tts_cache_path else None
+        text, pretranslated = items[idx]
+        request_config = dict(config)
+        if pretranslated:
+            request_config["tts_language"] = "Japanese"
+            request_config["tts_translate_to_selected_language"] = False
+        cache_path = _tts_cache_path(text, char, request_config) if _tts_cache_path else None
         if cache_path is not None and cache_path.exists() and cache_path.stat().st_size > 44:
             # Already cached — skip to next line immediately
-            QTimer.singleShot(0, lambda: self._prewarm_next_line(lines, idx + 1, char, config))
+            QTimer.singleShot(0, lambda: self._prewarm_next_line(items, idx + 1, char, config))
             return
-        worker = _CachedTTSRequestWorker(0, 0, text, char, config, play_when_ready=False, parent=self)
-        worker.finished.connect(lambda w=worker, i=idx: self._on_prewarm_line_done(lines, i, char, config, w))
+        worker = _CachedTTSRequestWorker(0, 0, text, char, request_config, play_when_ready=False, parent=self)
+        worker.finished.connect(lambda w=worker, i=idx: self._on_prewarm_line_done(items, i, char, config, w))
         worker.error.connect(lambda _msg: None)  # silently ignore prewarm errors
         self._tts_prewarm_workers.append(worker)
         worker.start()
 
-    def _on_prewarm_line_done(self, lines: list, idx: int, char: str, config: dict, worker):
+    def _on_prewarm_line_done(self, items: list, idx: int, char: str, config: dict, worker):
         """When a prewarm line finishes (success or error), start the next one."""
         try:
             if worker in self._tts_prewarm_workers:
@@ -3412,7 +3423,7 @@ class PetWindow(QWidget):
         except ValueError:
             pass
         # Chain to next line with a small delay to avoid flooding the server
-        QTimer.singleShot(500, lambda: self._prewarm_next_line(lines, idx + 1, char, config))
+        QTimer.singleShot(500, lambda: self._prewarm_next_line(items, idx + 1, char, config))
 
     def _on_motion_finished(self, *_args):
         self._motion_guard_token += 1

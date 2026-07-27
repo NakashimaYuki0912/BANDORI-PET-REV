@@ -19,7 +19,7 @@ import soundfile as sf
 
 from PySide6.QtCore import QObject, QThread, QTimer, Signal
 
-from daily_chat import complete_daily_chat_texts
+from daily_chat import complete_daily_chat_entries
 from process_utils import app_base_dir
 
 # ---------------------------------------------------------------------------
@@ -537,24 +537,36 @@ def collect_greeting_tts_lines(greetings: dict) -> list[str]:
     are used instead. Duplicates are removed while preserving
     first-occurrence order.
     """
-    seen: set[str] = set()
-    result: list[str] = []
+    return [text for text, _pretranslated in collect_greeting_tts_items(greetings)]
 
-    def _add(lines):
+
+def collect_greeting_tts_items(greetings: dict) -> list[tuple[str, bool]]:
+    """Collect ``(text, is_pretranslated)`` items for greeting prewarm."""
+    seen: set[str] = set()
+    result: list[tuple[str, bool]] = []
+
+    def _add(lines, pretranslated=False):
         for line in lines:
+            if isinstance(line, tuple):
+                line, pretranslated = line
             text = strip_tts_action_tags(str(line).strip())
             if text and text not in seen:
                 seen.add(text)
-                result.append(text)
+                result.append((text, pretranslated))
 
     # startup_greeting
     startup = greetings.get("startup_greeting", [])
     if isinstance(startup, list):
         _add(startup)
     # daily_chat replaces legacy double-click lines, but not startup greetings
-    daily_lines = complete_daily_chat_texts(greetings)
-    if daily_lines:
-        _add(daily_lines)
+    daily_entries = complete_daily_chat_entries(greetings)
+    if daily_entries:
+        _add(
+            (
+                (entry["tts_text"], entry["tts_text"] != entry["text"])
+                for entry in daily_entries
+            ),
+        )
         return result
     # click_responses
     for entry in greetings.get("click_responses", []) or []:

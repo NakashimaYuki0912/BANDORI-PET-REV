@@ -6,6 +6,7 @@ import unittest
 from daily_chat import (
     complete_daily_chat_entries,
     daily_chat_entries,
+    daily_chat_tts_texts,
     daily_chat_texts,
 )
 from tools.import_daily_chat import (
@@ -34,14 +35,28 @@ class DailyChatRuntimeTest(unittest.TestCase):
         self.assertEqual(
             daily_chat_entries(greetings),
             [
-                {"text": "plain text", "motion": "", "expression": ""},
-                {"text": "object text", "motion": "smile01", "expression": "happy"},
+                {"text": "plain text", "tts_text": "plain text", "motion": "", "expression": ""},
+                {"text": "object text", "tts_text": "object text", "motion": "smile01", "expression": "happy"},
             ],
         )
         self.assertEqual(
             daily_chat_texts(greetings),
             ["plain text", "object text"],
         )
+        self.assertEqual(
+            daily_chat_tts_texts(greetings),
+            ["plain text", "object text"],
+        )
+
+    def test_keeps_pretranslated_tts_text_separate_from_display_text(self):
+        greetings = {
+            "daily_chat": [
+                {"text": "中文气泡", "tts_text": "日本語の音声"},
+            ]
+        }
+
+        self.assertEqual(daily_chat_texts(greetings), ["中文气泡"])
+        self.assertEqual(daily_chat_tts_texts(greetings), ["日本語の音声"])
 
     def test_rejects_non_list_daily_chat_value(self):
         self.assertEqual(daily_chat_entries({"daily_chat": "not a list"}), [])

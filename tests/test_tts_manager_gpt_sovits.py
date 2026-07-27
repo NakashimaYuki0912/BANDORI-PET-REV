@@ -9,6 +9,7 @@ from tts_manager import (
     _gpt_sovits_model_paths,
     _gpt_sovits_payload,
     _tts_api_language_code,
+    collect_greeting_tts_items,
     _tts_lock,
     collect_greeting_tts_lines,
     effective_tts_voice_profile,
@@ -146,6 +147,19 @@ class TtsCacheTest(unittest.TestCase):
             collect_greeting_tts_lines(greetings),
             ["legacy startup", *[f"daily {index}" for index in range(12)]],
         )
+
+    def test_pretranslated_daily_chat_items_are_marked_for_direct_tts(self):
+        greetings = {
+            "startup_greeting": ["legacy startup"],
+            "daily_chat": [
+                {"text": f"中文 {index}", "tts_text": f"日本語 {index}"}
+                for index in range(12)
+            ],
+        }
+
+        items = collect_greeting_tts_items(greetings)
+        self.assertEqual(items[0], ("legacy startup", False))
+        self.assertEqual(items[1], ("日本語 0", True))
 
     def test_collects_startup_click_and_tiers_in_order_deduped(self):
         greetings = {

@@ -30,10 +30,13 @@ def daily_chat_entries(greetings: dict) -> list[dict[str, str]]:
     for value in values:
         if isinstance(value, str):
             text = value.strip()
+            tts_text = text
             motion = ""
             expression = ""
         elif isinstance(value, dict) and isinstance(value.get("text"), str):
             text = value["text"].strip()
+            tts_value = value.get("tts_text", text)
+            tts_text = tts_value.strip() if isinstance(tts_value, str) else text
             motion_value = value.get("motion", "")
             expression_value = value.get("expression", "")
             motion = motion_value.strip() if isinstance(motion_value, str) else ""
@@ -44,11 +47,12 @@ def daily_chat_entries(greetings: dict) -> list[dict[str, str]]:
             )
         else:
             continue
-        if not text:
+        if not text or not tts_text:
             continue
         result.append(
             {
                 "text": text,
+                "tts_text": tts_text,
                 "motion": motion,
                 "expression": expression,
             }
@@ -57,8 +61,13 @@ def daily_chat_entries(greetings: dict) -> list[dict[str, str]]:
 
 
 def daily_chat_texts(greetings: dict) -> list[str]:
-    """Return only the display/TTS text from :func:`daily_chat_entries`."""
+    """Return the display text from :func:`daily_chat_entries`."""
     return [entry["text"] for entry in daily_chat_entries(greetings)]
+
+
+def daily_chat_tts_texts(greetings: dict) -> list[str]:
+    """Return the pre-translated TTS text for the complete or partial pool."""
+    return [entry["tts_text"] for entry in daily_chat_entries(greetings)]
 
 
 def complete_daily_chat_entries(greetings: dict) -> list[dict[str, str]]:
