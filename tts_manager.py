@@ -350,7 +350,14 @@ CHARACTER_TRILINGUAL_NAMES = {
 }
 
 
-_ONE_CHAR_SURNAMES = frozenset({"凑", "要"})
+# Do not include common Chinese words here.  ``要`` is 要乐奈's surname but is
+# also a high-frequency verb, so recognizing it alone polluted unrelated TTS
+# translation prompts with the wrong character reference.
+_ONE_CHAR_SURNAMES = frozenset({"凑"})
+_SHORT_SURNAME_GIVEN_NAME_ALIASES = {
+    "凑友希那": "友希那",
+    "要乐奈": "乐奈",
+}
 _TTS_TRANSLATION_FORMAT_VERSION = "speaker-name-guidance-v1"
 
 # A bare Japanese kanji can have a different dictionary reading from a
@@ -371,6 +378,10 @@ def _find_referenced_characters(text: str) -> dict:
     matched: dict[str, tuple[str, str]] = {}
     for cn, (jp, en_) in CHARACTER_TRILINGUAL_NAMES.items():
         if cn in text:
+            matched[cn] = (jp, en_)
+            continue
+        given_name = _SHORT_SURNAME_GIVEN_NAME_ALIASES.get(cn)
+        if given_name and given_name in text:
             matched[cn] = (jp, en_)
             continue
         for slen in (3, 2, 1):

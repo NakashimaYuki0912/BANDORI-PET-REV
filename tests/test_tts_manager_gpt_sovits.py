@@ -5,6 +5,7 @@ import unittest
 from tts_manager import (
     TTSRequestWorker,
     _build_translation_system_prompt,
+    _find_referenced_characters,
     _gpt_sovits_model_paths,
     _gpt_sovits_payload,
     _tts_api_language_code,
@@ -27,6 +28,10 @@ class GPTSoVITSTest(unittest.TestCase):
         self.assertIn("丸山彩 (Aya Maruyama)", prompt)
         self.assertIn("写作「あや」", prompt)
         self.assertIn("不要单独写「彩」", prompt)
+
+    def test_common_chinese_yao_is_not_mistaken_for_rana(self):
+        self.assertNotIn("要乐奈", _find_referenced_characters("你要好好休息。"))
+        self.assertIn("要乐奈", _find_referenced_characters("乐奈今天很有精神。"))
 
     def test_builds_standard_remote_model_paths(self):
         paths = _gpt_sovits_model_paths("kaoru", {})
