@@ -1,15 +1,16 @@
 """Helpers for the fixed desktop-pet daily chat pool.
 
 Imported lines live separately from legacy ``click_responses`` because each
-character has a different number of motion groups.  Runtime code accepts the
-new pool only when all 12 unique lines are valid, so a partial edit falls back
-to the untouched legacy greetings instead of shrinking the visible dialogue.
+character has a different number of motion groups. Runtime code accepts the
+new pool only when all 24 revised lines are valid, so a partial edit falls
+back to the untouched legacy greetings instead of shrinking the visible
+dialogue.
 """
 
 from __future__ import annotations
 
 
-DAILY_CHAT_ENTRY_COUNT = 12
+DAILY_CHAT_ENTRY_COUNT = 24
 
 
 def daily_chat_entries(greetings: dict) -> list[dict[str, str]]:
@@ -71,13 +72,13 @@ def daily_chat_tts_texts(greetings: dict) -> list[str]:
 
 
 def complete_daily_chat_entries(greetings: dict) -> list[dict[str, str]]:
-    """Return the complete 12-line pool, or no entries for legacy fallback."""
+    """Return the complete 24-line pool, or no entries for legacy fallback."""
     raw_entries = greetings.get("daily_chat", []) if isinstance(greetings, dict) else []
     if not isinstance(raw_entries, list) or len(raw_entries) != DAILY_CHAT_ENTRY_COUNT:
         return []
     entries = daily_chat_entries(greetings)
     texts = [entry["text"] for entry in entries]
-    if len(entries) != DAILY_CHAT_ENTRY_COUNT or len(set(texts)) != len(texts):
+    if len(entries) != len(raw_entries) or len(set(texts)) != len(texts):
         return []
     return entries
 

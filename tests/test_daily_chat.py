@@ -62,17 +62,19 @@ class DailyChatRuntimeTest(unittest.TestCase):
         self.assertEqual(daily_chat_entries({"daily_chat": "not a list"}), [])
 
     def test_incomplete_or_duplicate_pool_falls_back(self):
+        legacy = {"daily_chat": [f"legacy {index}" for index in range(12)]}
         incomplete = {"daily_chat": [f"line {index}" for index in range(11)]}
-        duplicate = {"daily_chat": ["same line"] * 12}
+        duplicate = {"daily_chat": ["same line"] * 24}
         extra_invalid = {
-            "daily_chat": [f"line {index}" for index in range(12)] + [None]
+            "daily_chat": [f"line {index}" for index in range(24)] + [None]
         }
-        complete = {"daily_chat": [f"line {index}" for index in range(12)]}
+        complete = {"daily_chat": [f"line {index}" for index in range(24)]}
 
+        self.assertEqual(complete_daily_chat_entries(legacy), [])
         self.assertEqual(complete_daily_chat_entries(incomplete), [])
         self.assertEqual(complete_daily_chat_entries(duplicate), [])
         self.assertEqual(complete_daily_chat_entries(extra_invalid), [])
-        self.assertEqual(len(complete_daily_chat_entries(complete)), 12)
+        self.assertEqual(len(complete_daily_chat_entries(complete)), 24)
 
     def test_all_40_character_files_have_24_unique_daily_lines(self):
         keys = tuple(CHARACTER_NAME_TO_KEY.values())
