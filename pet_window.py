@@ -2413,49 +2413,19 @@ class PetWindow(QWidget):
         anchor = self._pet_bubble_anchor()
 
         daily_entries = complete_daily_chat_entries(greetings)
-        if daily_entries:
-            entry = random.choice(daily_entries)
-            text = entry["text"]
-            motion = entry["motion"]
-            expression = entry["expression"]
-            if motion or expression:
-                self._start_click_motion(motion, expression)
-            self._speech_bubble.show_text(text, anchor)
-            self._speak_pet_text(text, entry.get("tts_text", text))
+        if not daily_entries:
             return
 
-        click_responses = greetings.get("click_responses", [])
-        if click_responses:
-            entry = random.choice(click_responses)
-            lines = entry.get("lines", [])
-            if not lines:
-                return
-            text = random.choice(lines)
-            motion = entry.get("motion", "")
-            expression = entry.get("expression", "")
-            if motion or expression:
-                self._start_click_motion(motion, expression)
-            self._speech_bubble.show_text(text, anchor)
-            self._speak_pet_text(text)
-            return
-
-        tiers = greetings.get("tiers", [])
-        if not tiers:
-            return
-        tier_idx = min(self._greet_count, len(tiers) - 1)
-        tier = tiers[tier_idx]
-        lines = tier.get("lines", []) if isinstance(tier, dict) else list(tier)
-        if not lines:
-            return
-        text = random.choice(lines)
-        motion = tier.get("motion", "") if isinstance(tier, dict) else ""
-        expression = tier.get("expression", "") if isinstance(tier, dict) else ""
+        # Normal click response: always use the revised 24-line bilingual
+        # pool, never the legacy click_responses/tier text.
+        entry = random.choice(daily_entries)
+        text = entry["text"]
+        motion = entry["motion"]
+        expression = entry["expression"]
         if motion or expression:
             self._start_click_motion(motion, expression)
         self._speech_bubble.show_text(text, anchor)
-        self._speak_pet_text(text)
-        self._greet_count += 1
-        self._greet_reset_timer.start()
+        self._speak_pet_text(text, entry.get("tts_text", text))
 
     def _reset_greet_count(self):
         self._greet_count = 0
