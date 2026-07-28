@@ -74,7 +74,7 @@ class DailyChatRuntimeTest(unittest.TestCase):
         self.assertEqual(complete_daily_chat_entries(extra_invalid), [])
         self.assertEqual(len(complete_daily_chat_entries(complete)), 12)
 
-    def test_all_40_character_files_have_12_unique_daily_lines(self):
+    def test_all_40_character_files_have_24_unique_daily_lines(self):
         keys = tuple(CHARACTER_NAME_TO_KEY.values())
         self.assertEqual(len(keys), 40)
         self.assertEqual(len(set(keys)), 40)
@@ -84,8 +84,8 @@ class DailyChatRuntimeTest(unittest.TestCase):
                 path = PROJECT_ROOT / "characters" / key / "greetings.json"
                 greetings = json.loads(path.read_text(encoding="utf-8"))
                 texts = daily_chat_texts(greetings)
-                self.assertEqual(len(texts), 12)
-                self.assertEqual(len(set(texts)), 12)
+                self.assertEqual(len(texts), 24)
+                self.assertEqual(len(set(texts)), 24)
 
     def test_kokoro_and_aya_keep_their_japanese_signature_lines(self):
         expected_lines = {
