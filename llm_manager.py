@@ -1856,6 +1856,7 @@ class LLMStreamWorker(QThread):
             if use_tools and weather_tool_active:
                 messages = with_weather_tool_system_hint(messages, self._tool_config.get("weather_city_name", "南昌"))
             max_tool_rounds = 8 if self._tool_config.get("computer_use_enabled", False) else 3
+            last_tool_output = ""
             for round_index in range(max_tool_rounds):
                 self._stream_tool_calls = []
                 try:
@@ -1894,6 +1895,8 @@ class LLMStreamWorker(QThread):
                         self._tool_config,
                     )
                     tool_content = str(tool_result.get("content", "") or "")
+                    if tool_content:
+                        last_tool_output = tool_content
                     self._remember_search_sources(tool_content)
                     messages.append({
                         "role": "tool",
@@ -1909,6 +1912,10 @@ class LLMStreamWorker(QThread):
                 self._full_text,
                 self._reasoning_text,
             )
+            # 模型在工具轮次后没有产出正文（常见于天气/搜索工具返回错误、模型只发工具调用
+            # 而没有 final text）时，退回最后一条工具返回内容，避免聊天气泡完全空白。
+            if not (content or "").strip() and last_tool_output:
+                content = last_tool_output
             parsed_content, inline_sources = extract_inline_search_sources(content)
             if self._show_search_sources:
                 self._remember_search_source_items(inline_sources)

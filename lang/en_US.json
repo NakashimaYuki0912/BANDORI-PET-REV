@@ -505,6 +505,7 @@
     "PetWindow.opacity_pct": "{pct}%",
     "MainTray.tooltip": "BandoriPet",
     "MainTray.settings": "Settings",
+    "MainTray.reset_position": "Reset Position",
     "MainTray.exit": "Exit",
     "ModelResources.missing_title": "Missing model resources",
     "ModelResources.missing_content": "The models folder was not found. Please download and extract the model resources first.\nClick OK to open the download link in your default browser.",

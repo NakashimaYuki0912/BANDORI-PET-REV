@@ -1749,6 +1749,7 @@ class RadialMenu(QWidget):
         self._is_showing = False
         self._center = QPoint(0, 0)
         self._anchor_local = QPoint(0, 0)
+        self._use_stack = False
         self._radius = 110
         self._anim_group = None
         self._fps = 120
@@ -1879,6 +1880,89 @@ class RadialMenu(QWidget):
         max_y = available.bottom() - size.height() + 1 - margin
         x = max(available.left() + margin, min(x, max_x))
         y = max(available.top() + margin, min(y, max_y))
+        return QPoint(x, y)
+
+    def _row_top_left(self, center: QPoint, size: QSize, has_media: bool) -> QPoint:
+        """Position the row-layout menu so the pet stays visible on screen.
+
+        Mid-screen the pet sits in the wide gap (282px from the window's left
+        edge). When the pet is near a screen edge, move it to the window's near
+        edge instead, so the list and card extend into the free space rather
+        than covering the pet after the window gets clamped.
+        """
+        screen = QGuiApplication.screenAt(center) or QGuiApplication.primaryScreen()
+        avail = screen.availableGeometry() if screen is not None else None
+        margin = 4
+        if has_media:
+            pad = 12
+            list_w = 190
+            media_w = self._media_item_size().width()
+            need = 65 + pad + list_w + pad + media_w  # one side's worth of content
+            if avail is not None:
+                room_left = center.x() - avail.left()
+                room_right = avail.right() - center.x()
+            else:
+                room_left = room_right = need
+            if room_right >= need and room_left < 282:
+                pet_off_x = 65          # near left edge: content extends right
+            elif room_left >= need and room_right < 282:
+                pet_off_x = size.width() - 65  # near right edge: content extends left
+            else:
+                pet_off_x = 282         # normal: pet centered in the gap
+        else:
+            pet_off_x = size.width() // 2
+        x = center.x() - pet_off_x
+        y = center.y() - size.height() // 2
+        if avail is not None:
+            x = max(avail.left() + margin, min(x, avail.right() - size.width() + 1 - margin))
+            y = max(avail.top() + margin, min(y, avail.bottom() - size.height() + 1 - margin))
+        return QPoint(x, y)
+
+    def _prefer_stack(self, center: QPoint, has_media: bool) -> bool:
+        """True when the wide horizontal row cannot fit fully on screen
+        (pet near an edge), so we should use the compact vertical stack."""
+        if not has_media:
+            return False
+        screen = QGuiApplication.screenAt(center) or QGuiApplication.primaryScreen()
+        if screen is None:
+            return False
+        avail = screen.availableGeometry()
+        row_size = self._menu_popup_size(has_media)
+        row_left = center.x() - 282  # normal row: pet sits 282px from window left
+        row_right = row_left + row_size.width()
+        return not (avail.left() + 4 <= row_left and row_right <= avail.right() - 4)
+
+    def _menu_stack_size(self, has_media: bool) -> QSize:
+        """Compact vertical-stack window: rows on top, media card below."""
+        if not has_media:
+            return self._menu_popup_size(has_media)
+        n_rows = sum(1 for it in self._items if isinstance(it.widget, RadialListRow))
+        list_h = n_rows * 54 + 8
+        ms = self._media_item_size()
+        w = max(190, ms.width()) + 24
+        h = list_h + ms.height() + 44
+        return QSize(w, h)
+
+    def _stack_top_left(self, center: QPoint, size: QSize, has_media: bool) -> QPoint:
+        """Position the vertical stack on the pet's screen-interior side."""
+        del has_media
+        screen = QGuiApplication.screenAt(center) or QGuiApplication.primaryScreen()
+        avail = screen.availableGeometry() if screen is not None else None
+        margin = 4
+        pet_hw = 65
+        if avail is not None:
+            room_left = center.x() - avail.left()
+            room_right = avail.right() - center.x()
+        else:
+            room_left = room_right = 1
+        if room_right >= room_left:
+            x = center.x() + pet_hw + margin
+        else:
+            x = center.x() - pet_hw - margin - size.width()
+        y = center.y() - size.height() // 2
+        if avail is not None:
+            x = max(avail.left() + margin, min(x, avail.right() - size.width() + 1 - margin))
+            y = max(avail.top() + margin, min(y, avail.bottom() - size.height() + 1 - margin))
         return QPoint(x, y)
 
     def _prewarm_paint_cache(self):
@@ -2069,14 +2153,21 @@ class RadialMenu(QWidget):
         self._set_center_reveal_value(0.0)
 
         if self._is_row_layout():
-            popup_size = self._menu_popup_size(has_media)
-            # List left of pet, card right of pet — pet sits in the wide gap
-            center = QPoint(center.x() + popup_size.width() // 2 - 282, center.y())
+            # Near a screen edge the wide row would clamp and cover the pet:
+            # fall back to the compact vertical stack there. Mid-screen keeps
+            # the tuned horizontal row.
+            self._use_stack = self._prefer_stack(center, has_media)
+            if self._use_stack:
+                popup_size = self._menu_stack_size(has_media)
+                top_left = self._stack_top_left(center, popup_size, has_media)
+            else:
+                popup_size = self._menu_popup_size(has_media)
+                top_left = self._row_top_left(center, popup_size, has_media)
         else:
             popup_size = self._menu_popup_size(has_media)
+            top_left = self._clamped_top_left(center, popup_size)
         total_w = popup_size.width()
         total_h = popup_size.height()
-        top_left = self._clamped_top_left(center, popup_size)
 
         self.setGeometry(top_left.x(), top_left.y(), total_w, total_h)
 
@@ -2182,7 +2273,17 @@ class RadialMenu(QWidget):
             item.widget.move(start_x, start_y)
 
     def _layout_vertical_list(self, cx: int, cy: int, has_media: bool):
-        """Left-right with wide gap: list on left, card on far right."""
+        """List rows + media card arranged so neither block covers the pet.
+
+        cx is the pet's position inside this window. Mid-screen this keeps the
+        tuned layout (list at the left edge, card at the right edge, pet in the
+        wide gap). When the window was clamped at a screen edge the pet no longer
+        falls in the gap, so the blocks are rearranged on the pet's free side.
+        """
+        if self._use_stack:
+            self._layout_vertical_stack(cx, cy, has_media)
+            return
+
         pad = 12
         row_h = 54
         list_w = 190
@@ -2194,8 +2295,83 @@ class RadialMenu(QWidget):
             elif isinstance(item.widget, RadialListRow):
                 row_indices.append(i)
 
-        # List rows on the left, vertically centered
         list_top = (self.height() - len(row_indices) * row_h) // 2
+
+        if media_idx is None:
+            list_x = pad
+            card_x = 0
+        else:
+            media = self._items[media_idx]
+            mw = media.widget.width()
+            mh = media.widget.height()
+            list_x = pad
+            card_x = self.width() - mw - pad
+            if not (list_x + list_w < cx < card_x):
+                # Pet is not inside the gap (window got clamped at a screen edge).
+                pet_hw = 65  # visible-model half width (matches the 130px gap)
+                room_left = cx - pad
+                room_right = self.width() - cx - pad
+                need = list_w + mw + 2 * pad
+                if room_right >= need and room_left < mw + pad:
+                    # pet near the left edge: card then list, both to the right
+                    card_x = cx + pet_hw + pad
+                    list_x = card_x + mw + pad
+                    if list_x + list_w > self.width() - pad:
+                        list_x = self.width() - list_w - pad
+                elif room_left >= need and room_right < list_w + pad:
+                    # pet near the right edge: list then card, both to the left
+                    list_x = cx - pet_hw - pad - list_w
+                    card_x = list_x - pad - mw
+                    if card_x < pad:
+                        card_x = pad
+                elif room_left >= list_w + pad and room_right >= mw + pad:
+                    # room on both sides: pull the blocks up against the pet
+                    list_x = cx - pet_hw - pad - list_w
+                    card_x = cx + pet_hw + pad
+                elif room_right >= room_left:
+                    # extreme corner: list closest to the pet, card beyond
+                    list_x = cx + pet_hw + pad
+                    card_x = list_x + list_w + pad
+                    if card_x + mw > self.width() - pad:
+                        card_x = max(self.width() - mw - pad, list_x + 8)
+                else:
+                    # extreme corner: list closest to the pet, card beyond
+                    list_x = cx - pet_hw - pad - list_w
+                    card_x = list_x - pad - mw
+                    if card_x < pad:
+                        card_x = max(pad, list_x - 8)
+                    if card_x + mw > self.width() - pad:
+                        card_x = self.width() - mw - pad
+
+        for j, i in enumerate(row_indices):
+            item = self._items[i]
+            item.widget.setFixedWidth(list_w)
+            item.widget.move(list_x, list_top + j * row_h)
+            item.end_offset = QPoint(0, 0)
+            item.start_offset = QPoint(0, 0)
+
+        if media_idx is not None:
+            media = self._items[media_idx]
+            media.widget.move(card_x, (self.height() - media.widget.height()) // 2)
+            media.end_offset = QPoint(0, 0)
+            media.start_offset = QPoint(0, 0)
+
+    def _layout_vertical_stack(self, cx: int, cy: int, has_media: bool):
+        """Compact vertical stack used near screen edges: rows on top,
+        media card below, aligned to the side away from the pet."""
+        del cx, cy
+        pad = 12
+        row_h = 54
+        list_w = 190
+        row_indices = []
+        media_idx = None
+        for i, item in enumerate(self._items):
+            if item.is_media:
+                media_idx = i
+            elif isinstance(item.widget, RadialListRow):
+                row_indices.append(i)
+
+        list_top = pad
         for j, i in enumerate(row_indices):
             item = self._items[i]
             item.widget.setFixedWidth(list_w)
@@ -2203,12 +2379,9 @@ class RadialMenu(QWidget):
             item.end_offset = QPoint(0, 0)
             item.start_offset = QPoint(0, 0)
 
-        # Media card on the FAR right
         if media_idx is not None:
             media = self._items[media_idx]
-            mw = media.widget.width()
-            mh = media.widget.height()
-            media.widget.move(self.width() - mw - pad, (self.height() - mh) // 2)
+            media.widget.move(pad, list_top + len(row_indices) * row_h + 12)
             media.end_offset = QPoint(0, 0)
             media.start_offset = QPoint(0, 0)
 

@@ -1794,6 +1794,21 @@ class PetWindow(QWidget):
             self._suppress_compact_ai_sync = False
         self._move_compact_ai_with_pet(dx, dy)
 
+    def _reset_position_to_center(self):
+        """重置角色位置：把宠物移到当前所在屏幕可用区域的中央。
+
+        先解除任务栏吸附状态，防止 _follow_taskbar 立刻把窗口拽回去；
+        位置由 moveEvent -> _schedule_position_save 持久化到 config。
+        """
+        self._clear_taskbar_follow_state()
+        screen = QApplication.screenAt(self.geometry().center()) or QApplication.primaryScreen()
+        if screen is None:
+            return
+        geo = screen.availableGeometry()
+        x = geo.left() + max(0, (geo.width() - self.width()) // 2)
+        y = geo.top() + max(0, (geo.height() - self.height()) // 2)
+        self.move(x, y)
+
     def _taskbar_dpr(self) -> float:
         """Current screen's device pixel ratio (screenAt scans all screens)."""
         screen = QApplication.screenAt(self.geometry().center()) or QApplication.primaryScreen()
@@ -2811,6 +2826,8 @@ class PetWindow(QWidget):
             parts = line.split("\t", 2)
             if len(parts) == 3 and parts[1] == self._current_char:
                 self._switch_model(parts[1], parts[2])
+        elif line == "RESET_POSITION":
+            self._reset_position_to_center()
         elif line == "SHUTDOWN":
             self._quit()
 

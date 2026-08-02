@@ -1,5 +1,5 @@
 APP_NAME = "BandoriPet"
-APP_VERSION = "3.1.0.1"
+APP_VERSION = "3.1.0.2"
 
 APP_REPOSITORY = "izasaraba/BANDORI-PET-REV"
 APP_REPO_URL = f"https://github.com/{APP_REPOSITORY}"

@@ -505,6 +505,7 @@
     "PetWindow.opacity_pct": "{pct}%",
     "MainTray.tooltip": "BandoriPet",
     "MainTray.settings": "設定",
+    "MainTray.reset_position": "重置角色位置",
     "MainTray.exit": "離開",
     "ModelResources.missing_title": "缺少模型資源",
     "ModelResources.missing_content": "未找到 models 資料夾，請先下載並解壓縮模型資源。\n點擊確定後將使用預設瀏覽器開啟下載連結。",

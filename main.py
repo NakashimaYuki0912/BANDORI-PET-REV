@@ -117,6 +117,8 @@ def main():
         menu = apply_compact_tray_menu_style(QMenu())
         settings_action = menu.addAction(_tr("MainTray.settings"))
         settings_action.triggered.connect(lambda: launch_settings_process(show_launch=False))
+        reset_pos_action = menu.addAction(_tr("MainTray.reset_position"))
+        reset_pos_action.triggered.connect(lambda: broadcast_ipc_line("RESET_POSITION"))
         exit_action = menu.addAction(_tr("MainTray.exit"))
         exit_action.triggered.connect(quit_all)
         tray_icon.setContextMenu(menu)

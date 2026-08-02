@@ -22,6 +22,59 @@ WEB_SEARCH_ENGINE_LABELS = {
     "baidu": "Baidu",
 }
 
+# 常用城市中文名 -> 心知天气 LocationID（101xxxxxx，中国天气网通用格式）。
+# 模型传城市名时由 _run_weather_tool 翻译成 ID，避免因猜错 ID / 传城市名导致
+# 查询失败而最终回复为空。省会按 101+省编码+0101 的通用规律整理。
+CITY_NAME_TO_LOCATION_ID = {
+    "北京": "101010100",
+    "上海": "101020100",
+    "天津": "101030100",
+    "重庆": "101040100",
+    "哈尔滨": "101050101",
+    "长春": "101060101",
+    "沈阳": "101070101",
+    "呼和浩特": "101080101",
+    "石家庄": "101090101",
+    "太原": "101100101",
+    "西安": "101110101",
+    "济南": "101120101",
+    "郑州": "101180101",
+    "南京": "101190101",
+    "合肥": "101220101",
+    "杭州": "101210101",
+    "武汉": "101200101",
+    "南昌": "101240101",
+    "长沙": "101250101",
+    "广州": "101280101",
+    "深圳": "101280601",
+    "南宁": "101300101",
+    "海口": "101310101",
+    "成都": "101270101",
+    "贵阳": "101260101",
+    "昆明": "101290101",
+    "拉萨": "101140101",
+    "兰州": "101160101",
+    "西宁": "101150101",
+    "银川": "101170101",
+    "乌鲁木齐": "101130101",
+    "苏州": "101190401",
+    "青岛": "101120201",
+    "厦门": "101230201",
+    "大连": "101070201",
+    "宁波": "101210401",
+    "福州": "101230101",
+}
+
+
+def resolve_weather_location(location: str) -> str:
+    """把中文城市名翻译成 LocationID；已是 ID / 经纬度则原样返回。"""
+    if not location:
+        return location
+    key = location.strip()
+    if key.endswith("市"):
+        key = key[:-1]
+    return CITY_NAME_TO_LOCATION_ID.get(key, location)
+
 
 CHAT_COMPLETIONS_WEB_SEARCH_TOOL = {
     "type": "function",
@@ -57,7 +110,8 @@ CHAT_COMPLETIONS_WEATHER_TOOL = {
         "description": (
             "查询指定城市的实时天气与近两日预报。"
             "当用户询问天气、温度、降雨、是否适合出行等问题时调用；"
-            "不填写 location 则查询用户默认城市。"
+            "location 可填城市中文名（如 北京、合肥、南昌，会自动识别）或 LocationID（如 101010100）或 经度,纬度（如 116.40,39.90）；"
+            "不填写则查询用户默认城市。"
         ),
         "parameters": {
             "type": "object",
@@ -65,7 +119,8 @@ CHAT_COMPLETIONS_WEATHER_TOOL = {
                 "location": {
                     "type": "string",
                     "description": (
-                        "城市 LocationID（如 101010100）或 经度,纬度（如 116.40,39.90）。"
+                        "城市中文名（如 北京、上海、合肥，会自动识别为 LocationID）、"
+                        "LocationID（如 101010100）或 经度,纬度（如 116.40,39.90）。"
                         "省略则使用用户配置的默认城市。"
                     ),
                 },
@@ -80,8 +135,8 @@ def weather_tool_system_hint(default_city_name: str = "默认城市") -> str:
     return (
         "【天气查询工具】\n"
         f"系统提示词中已包含{default_city_name}的实时天气数据，回答{default_city_name}天气时直接使用，无需调用工具。\n"
-        "仅当用户明确询问其他城市的天气时，才调用 get_weather 并传入对应的 LocationID。\n"
-        "常见城市：北京 101010100、上海 101020100、广州 101280101、深圳 101280601。\n"
+        "仅当用户明确询问其他城市的天气时，才调用 get_weather 并传入城市名即可（如 合肥、南京），工具会自动识别为 LocationID。\n"
+        "常见城市 ID：北京 101010100、上海 101020100、广州 101280101、深圳 101280601、南昌 101240101、合肥 101220101、南京 101190101、武汉 101200101。\n"
         "无论如何，回答天气问题时必须明确说出真实数据（天气状况和温度），不得用诗意描述代替。"
     )
 
@@ -98,7 +153,9 @@ def with_weather_tool_system_hint(messages: list[dict], default_city_name: str =
 
 def _run_weather_tool(arguments: dict, tool_config: dict) -> str:
     import weather_manager
-    location = (arguments.get("location") or "").strip() or tool_config.get("weather_city", "")
+    location = resolve_weather_location(
+        (arguments.get("location") or "").strip() or tool_config.get("weather_city", "")
+    )
     private_key = tool_config.get("weather_private_key", "")
     api_host = tool_config.get("weather_api_host", "")
     key_id = tool_config.get("weather_key_id", "")

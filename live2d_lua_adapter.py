@@ -354,6 +354,37 @@ class LuaLive2DModule:
             b"function(renderer, name) return renderer:set_expression(name) end"
         )
         self._reset_expression = lua.eval(b"function(renderer) return renderer:reset_expression() end")
+        # Free a renderer's model GL resources (textures, VBOs/EBOs, clip
+        # framebuffers, shaders). Reusing one LAppModel across costume/character
+        # switches would otherwise leak every discarded model's GPU resources
+        # into VRAM until the process exits, making the preview (and pet)
+        # progressively laggier the more you switch.
+        self._release_renderer = lua.eval(
+            b"function(renderer) "
+            b"if renderer == nil or renderer.model == nil then return end; "
+            b"local model = renderer.model; renderer.model = nil; renderer.model_path = nil; "
+            b"local gl = require('live2d.core.live2d_gl_wrapper'); "
+            b"local live2DModel = model.live2DModel; "
+            b"if live2DModel == nil then return end; "
+            b"local dp = live2DModel.drawParamGL; "
+            b"if dp ~= nil then "
+            b"local textures = dp.textures or {}; "
+            b"for i = 1, #textures do local t = textures[i]; if t ~= nil and t ~= 0 then pcall(gl.deleteTexture, t) end end; "
+            b"dp.textures = {}; "
+            b"local bufs = { dp.vbo, dp.uvbo, dp.ebo }; "
+            b"for i = 1, 3 do local buf = bufs[i]; if buf ~= nil and buf ~= 0 then pcall(gl.deleteBuffer, buf) end end; "
+            b"dp.vbo, dp.uvbo, dp.ebo = nil, nil, nil; "
+            b"local fb = dp.framebufferObject; "
+            b"if fb ~= nil then "
+            b"if fb.framebuffer ~= nil and fb.framebuffer ~= 0 then pcall(gl.deleteFramebuffer, fb.framebuffer) end; "
+            b"if fb.renderbuffer ~= nil and fb.renderbuffer ~= 0 then pcall(gl.deleteRenderbuffer, fb.renderbuffer) end; "
+            b"if fb.texture ~= nil and fb.texture ~= 0 then pcall(gl.deleteTexture, fb.texture) end; "
+            b"dp.framebufferObject = nil; "
+            b"end; "
+            b"if dp.disposeShader ~= nil then pcall(dp.disposeShader, dp) end; "
+            b"end; "
+            b"end"
+        )
         self._lua = lua
         self._initialized = True
 
@@ -415,6 +446,15 @@ class LuaLAppModel:
 
     def LoadModelJson(self, model_json_path: str, disable_precision=False):
         del disable_precision
+        # Free the previous renderer's GL resources before replacing it, so
+        # switching costumes/characters doesn't accumulate VRAM until the
+        # process exits (the source of progressively laggier previews).
+        old_renderer = self._renderer
+        if old_renderer is not None:
+            try:
+                self._module._release_renderer(old_renderer)
+            except Exception:
+                pass
         model_json = _load_model_json(model_json_path)
         self.modelSetting = _ModelSetting(model_json)
         self.expressions = self._read_expression_names(model_json)
