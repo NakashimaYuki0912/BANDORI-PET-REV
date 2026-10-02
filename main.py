@@ -28,6 +28,7 @@ from app_theme import apply_app_theme
 from ai_status_server import AiStatusHttpServer
 from chat_integration_server import ChatIntegrationHttpServer
 from tray_menu_style import apply_compact_tray_menu_style
+from startup_tasks import start_tts_services_async
 
 
 class AiEventBridge(QObject):
@@ -97,6 +98,8 @@ def main():
     chat_integration_ref = {"server": None, "db": None, "lock": threading.RLock()}
     ai_event_bridge = AiEventBridge()
     tts_process_ref = {"process": None}
+    tts_start_cancel = threading.Event()
+    tts_start_lock = threading.Lock()
 
     char = cfg.get("character", "")
     costume = cfg.get("costume", "")
@@ -125,7 +128,7 @@ def main():
         tray_icon.activated.connect(lambda reason: launch_settings_process(show_launch=False) if reason == QSystemTrayIcon.ActivationReason.Trigger else None)
         tray_icon.show()
 
-    def start_ssh_tunnel():
+    def _start_ssh_tunnel_sync():
         if not bool(cfg.get("tts_enabled", False)):
             return
         api_url = str(cfg.get("tts_api_url", "") or "").strip().lower()
@@ -149,8 +152,7 @@ def main():
         notify_chat_processes_shutdown()
         stop_ai_status_server()
         stop_chat_integration_server()
-        stop_tts_backend()
-        stop_ssh_tunnel()
+        stop_tts_services()
         close_pet_processes(force=True)
         close_settings_process(force=True)
         if tray_icon is not None:
@@ -267,6 +269,24 @@ def main():
                 proc.wait(timeout=3)
         except OSError:
             pass
+
+    def start_tts_services():
+        def start_fallback_if_active():
+            with tts_start_lock:
+                if not tts_start_cancel.is_set():
+                    start_tts_backend()
+
+        return start_tts_services_async(
+            start_tunnel=_start_ssh_tunnel_sync,
+            start_fallback_backend=start_fallback_if_active,
+            is_cancelled=tts_start_cancel.is_set,
+        )
+
+    def stop_tts_services():
+        tts_start_cancel.set()
+        with tts_start_lock:
+            stop_tts_backend()
+        stop_ssh_tunnel()
 
     def init_ai_status_server():
         enabled = bool(cfg.get("ai_status_port_enabled", False))
@@ -856,16 +876,14 @@ def main():
     init_ipc_server()
     init_ai_status_server()
     init_chat_integration_server()
-    start_ssh_tunnel()   # must run before start_tts_backend so port check sees the tunnel
-    start_tts_backend()
+    start_tts_services()  # tunnel first, then local fallback, off the UI thread
     # Pre-warming disabled: always launch fresh for reliable direct page navigation
     # _QTimer.singleShot(800, prewarm_settings_process)
 
     app.aboutToQuit.connect(save_config)
     app.aboutToQuit.connect(stop_ai_status_server)
     app.aboutToQuit.connect(stop_chat_integration_server)
-    app.aboutToQuit.connect(stop_tts_backend)
-    app.aboutToQuit.connect(stop_ssh_tunnel)
+    app.aboutToQuit.connect(stop_tts_services)
     app.aboutToQuit.connect(close_chat_integration_db)
     app.aboutToQuit.connect(close_settings_process)
     app.aboutToQuit.connect(close_pet_processes)
