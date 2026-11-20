@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 from app_theme import apply_app_theme
 from compact_ai_window import CompactAIWindow
 from daily_chat import complete_daily_chat_entries
+from ambient_chat_manager import AmbientChatManager
 from i18n_manager import tr as _tr, set_language
 from live2d_click_actions import (
     CLICK_MOTION_NONE,
@@ -309,6 +310,11 @@ class SpeechBubble(QWidget):
         self._text = ""
         self._lines: list[str] = []
         self._tail_x: int = 0
+        self._display_ms = 3500
+        self._visible_chars = 0
+        self._typewriter_timer = QTimer(self)
+        self._typewriter_timer.setInterval(32)
+        self._typewriter_timer.timeout.connect(self._on_typewriter_tick)
         self._hide_timer = QTimer(self)
         self._hide_timer.setSingleShot(True)
         self._hide_timer.timeout.connect(self._begin_fade)
@@ -319,11 +325,20 @@ class SpeechBubble(QWidget):
         self._fade_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._fade_anim.finished.connect(self.hide)
 
-    def show_text(self, text: str, anchor: QPoint, display_ms: int = 3500):
+    def _on_typewriter_tick(self):
+        self._visible_chars += 1
+        if self._visible_chars >= len(self._text):
+            self._typewriter_timer.stop()
+            self._hide_timer.start(self._display_ms)
+        self.update()
+
+    def show_text(self, text: str, anchor: QPoint, display_ms: int = 3500, typewriter: bool = True):
         self._hide_timer.stop()
+        self._typewriter_timer.stop()
         self._fade_anim.stop()
         self._opacity_fx.setOpacity(1.0)
         self._text = text
+        self._display_ms = display_ms
 
         # ── 1. 切换窗口到锚点所在的屏幕，确保字体度量与定位
         #    使用该屏幕的 DPI ──
@@ -381,7 +396,12 @@ class SpeechBubble(QWidget):
 
         self.move(clamped_x, clamped_y)
         self.show()
-        self._hide_timer.start(display_ms)
+        if typewriter and len(text) > 1:
+            self._visible_chars = 1
+            self._typewriter_timer.start()
+        else:
+            self._visible_chars = len(text)
+            self._hide_timer.start(display_ms)
 
     def _begin_fade(self):
         self._fade_anim.setStartValue(1.0)
@@ -419,8 +439,13 @@ class SpeechBubble(QWidget):
         painter.setPen(QColor(50, 30, 50))
         line_h = fm.height()
         y = self._PADDING + fm.ascent()
+        remaining = self._visible_chars
         for line in self._lines:
-            painter.drawText(self._PADDING, y, line)
+            if remaining <= 0:
+                break
+            chunk = line[:remaining]
+            painter.drawText(self._PADDING, y, chunk)
+            remaining -= len(chunk)
             y += line_h
         painter.end()
 
@@ -684,6 +709,7 @@ class PetWindow(QWidget):
         self._greet_reset_timer.setInterval(20000)
         self._greet_reset_timer.timeout.connect(self._reset_greet_count)
         self._speech_bubble = SpeechBubble()
+        self._ambient_chat_manager = AmbientChatManager(self._cfg, parent=self)
         self._pixel_mode = self._configured_pet_mode() == "pixel"
         self._pixel_frames = load_pixel_frames() if self._pixel_mode else None
         self._pixel_ready = False
@@ -1272,6 +1298,7 @@ class PetWindow(QWidget):
             self._current_char, self._current_costume
         )
         if path:
+            self._ambient_chat_manager.set_character(self._current_char)
             self._live2d_widget.set_model_path(path)
             if self._pixel_mode and not self._enable_pixel_mode(save=False):
                 self._enable_live2d_mode(save=False)
@@ -2439,16 +2466,21 @@ class PetWindow(QWidget):
             return
         anchor = self._pet_bubble_anchor()
 
-        daily_entries = complete_daily_chat_entries(greetings)
-        if not daily_entries:
-            return
-
-        # Normal click response: always use the revised 24-line bilingual
-        # pool, never the legacy click_responses/tier text.
-        entry = random.choice(daily_entries)
-        text = entry["text"]
-        motion = entry["motion"]
-        expression = entry["expression"]
+        # Try zero-latency context-aware ambient entry first
+        dynamic_entry = self._ambient_chat_manager.pop_ambient_entry(self._current_char)
+        if dynamic_entry is not None:
+            entry = dynamic_entry
+            text = entry["text"]
+            motion = entry.get("motion", "")
+            expression = entry.get("expression", "")
+        else:
+            daily_entries = complete_daily_chat_entries(greetings)
+            if not daily_entries:
+                return
+            entry = random.choice(daily_entries)
+            text = entry["text"]
+            motion = entry["motion"]
+            expression = entry["expression"]
         if motion or expression:
             self._start_click_motion(motion, expression)
         self._speech_bubble.show_text(text, anchor)
