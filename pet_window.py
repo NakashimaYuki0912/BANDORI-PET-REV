@@ -1384,7 +1384,15 @@ class PetWindow(QWidget):
         startup_lines = greetings.get("startup_greeting", [])
         if not startup_lines:
             return
-        self._show_pet_bubble(random.choice(startup_lines), 6000)
+        line = random.choice(startup_lines)
+        if isinstance(line, dict):
+            text = line.get("text", "")
+            tts_text = line.get("tts_text", text)
+        else:
+            text = str(line)
+            tts_text = None
+        self._show_pet_bubble(text, 6000)
+        self._speak_pet_text(text, tts_text)
 
     def _note_user_interaction(self):
         self._last_user_interaction_at = time.monotonic()
