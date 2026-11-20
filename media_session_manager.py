@@ -85,13 +85,16 @@ def send_media_command(command: str) -> bool:
 
 def _run_async(awaitable):
     try:
-        return asyncio.run(awaitable)
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
         try:
-            return loop.run_until_complete(awaitable)
-        finally:
-            loop.close()
+            return asyncio.run(awaitable)
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(awaitable)
+            finally:
+                loop.close()
+    except BaseException:
+        return None
 
 
 async def _request_manager():

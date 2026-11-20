@@ -1151,8 +1151,13 @@ class PetWindow(QWidget):
         super().hideEvent(event)
 
     def _guard_live2d_visibility(self):
-        if not self.isVisible() or self._hide_live2d_model or self._pixel_mode:
+        if self._hide_live2d_model or self._pixel_mode:
             return
+
+        # 意外被隐藏时自动唤醒重现（系统睡眠唤醒、锁屏恢复等）
+        if not self.isVisible():
+            self.show()
+            self._enforce_game_topmost()
 
         repaired = False
         if self._stack.currentWidget() is not self._live2d_widget:
@@ -1169,24 +1174,21 @@ class PetWindow(QWidget):
             self.resize(expected_w, expected_h)
             repaired = True
 
-        # While snapped to the taskbar the pet sits on the work-area edge; do not
-        # "repair" Y via availableGeometry (work-area shrinks when the tray rises
-        # and would yank the pet upward — feels like a snap).
         screens = QApplication.screens()
-        if (
-            screens
-            and not self._taskbar_snapped
-            and not any(
+        # 即使处于 _taskbar_snapped，如果彻底脱离了所有显示器的可用区域（如任务栏异常坐标把窗口推下屏幕），强制拉回
+        if screens:
+            is_intersecting = any(
                 screen.availableGeometry().adjusted(-64, -64, 64, 64).intersects(self.geometry())
                 for screen in screens
             )
-        ):
-            geo = (QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()).availableGeometry()
-            self.move(
-                max(geo.left(), min(self.x(), geo.right() - self.width())),
-                max(geo.top(), min(self.y(), geo.bottom() - self.height())),
-            )
-            repaired = True
+            if not is_intersecting:
+                self._taskbar_snapped = False
+                geo = (QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()).availableGeometry()
+                self.move(
+                    max(geo.left(), min(self.x(), geo.right() - self.width())),
+                    max(geo.top(), min(self.y(), geo.bottom() - self.height())),
+                )
+                repaired = True
 
         model = self._live2d_widget.model
         if model is None:
@@ -2266,6 +2268,16 @@ class PetWindow(QWidget):
 
         follow_top = self._taskbar_follow_top(real_top)
         target_y = follow_top - self.height()
+
+        # 屏幕下边界安全保护：防止任务栏异常坐标将桌宠推入屏幕下方不可见区域
+        screen = QApplication.screenAt(self.geometry().center()) or QApplication.primaryScreen()
+        if screen:
+            screen_geo = screen.availableGeometry()
+            # 保证窗口至少保留 80px 露在屏幕工作区内
+            max_y = screen_geo.bottom() - 80
+            min_y = screen_geo.top()
+            target_y = max(min_y, min(target_y, max_y))
+
         if self.y() != target_y:
             self._move_raw(self.x(), target_y)
 

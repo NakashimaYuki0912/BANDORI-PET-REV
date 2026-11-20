@@ -10,7 +10,22 @@ from fluent_bootstrap import apply_qt_font_fallback
 BASE_DIR = str(app_base_dir())
 
 _log_path = os.path.join(BASE_DIR, "bandori_error.log")
-sys.stderr = open(_log_path, "w", encoding="utf-8", buffering=1)
+sys.stderr = open(_log_path, "a", encoding="utf-8", buffering=1)
+import datetime
+import time
+
+def log_error(msg: str):
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    formatted = f"[{timestamp}] {msg}\n"
+    try:
+        sys.stderr.write(formatted)
+        sys.stderr.flush()
+    except Exception:
+        pass
+    try:
+        print(msg)
+    except Exception:
+        pass
 TTS_BACKEND_DIR = os.path.join(BASE_DIR, "backend", "Qwen3TTS-0.6b-API")
 
 from PySide6.QtCore import Qt, QObject, QProcess, QTimer, Signal
@@ -92,7 +107,7 @@ def main():
         return 0
 
     mgr = ModelManager()
-    pet_window_ref = {"processes": [], "chars": set()}
+    pet_window_ref = {"processes": [], "chars": set(), "shutting_down": False, "respawn_history": {}}
     ipc_ref = {"clients": [], "buffers": {}}
     ai_status_ref = {"server": None}
     chat_integration_ref = {"server": None, "db": None, "lock": threading.RLock()}
@@ -149,6 +164,7 @@ def main():
             pass
 
     def quit_all():
+        pet_window_ref["shutting_down"] = True
         notify_chat_processes_shutdown()
         stop_ai_status_server()
         stop_chat_integration_server()
@@ -471,7 +487,9 @@ def main():
         cfg.set("language", current_language())
         cfg.save()
 
-    def close_pet_processes(force=False):
+    def close_pet_processes(force=False, keep_alive=False):
+        if not keep_alive:
+            pet_window_ref["shutting_down"] = True
         for process in list(pet_window_ref.get("processes", [])):
             if not isValid(process):
                 continue
@@ -739,37 +757,70 @@ def main():
             path = ModelManager.get_model_json_path(selected_char, selected_costume)
             if path:
                 models.append({"character": selected_char, "costume": selected_costume, "path": path})
-        close_pet_processes()
+        close_pet_processes(keep_alive=True)
+        pet_window_ref["shutting_down"] = False
         pet_window_ref["processes"] = []
         pet_window_ref["chars"] = {m.get("character", "") for m in models}
         for idx, model in enumerate(models):
-            process = QProcess(app)
-            program, arguments = process_program_and_args(BASE_DIR, "pet_process.py", [
-                "--character", model["character"],
-                "--costume", model["costume"],
-                "--model-path", model["path"],
-                "--index", str(idx),
-            ])
-            process.setProgram(program)
-            process.setArguments(arguments)
-            process.setProcessChannelMode(QProcess.ProcessChannelMode.SeparateChannels)
-            process.readyReadStandardError.connect(lambda p=process: read_pet_error(p))
-            process.finished.connect(lambda *args, p=process: clear_pet_process(p))
-            pet_window_ref["processes"].append(process)
-            process.start()
+            _start_one_pet(model, idx)
 
-    def read_pet_error(process):
+    def _start_one_pet(model, idx):
+        char_name = model.get("character", "")
+        process = QProcess(app)
+        program, arguments = process_program_and_args(BASE_DIR, "pet_process.py", [
+            "--character", char_name,
+            "--costume", model["costume"],
+            "--model-path", model["path"],
+            "--index", str(idx),
+        ])
+        process.setProgram(program)
+        process.setArguments(arguments)
+        process.setProcessChannelMode(QProcess.ProcessChannelMode.SeparateChannels)
+        process.readyReadStandardError.connect(lambda p=process, c=char_name: read_pet_error(p, c))
+        process.finished.connect(lambda code, status, p=process, m=model, i=idx: on_pet_process_finished(code, status, p, m, i))
+        pet_window_ref["processes"].append(process)
+        process.start()
+
+    def read_pet_error(process, char_name=""):
         data = bytes(process.readAllStandardError()).decode("utf-8", errors="replace").strip()
         if data:
-            print(data)
+            log_error(f"[PetProcess:{char_name}] {data}")
 
-    def clear_pet_process(process):
-        if not isValid(process):
+    def on_pet_process_finished(exit_code, exit_status, process, model, idx):
+        if isValid(process):
+            processes = pet_window_ref.get("processes", [])
+            if process in processes:
+                processes.remove(process)
+            process.deleteLater()
+
+        char_name = model.get("character", "")
+        # If shutdown was intentional, do not respawn
+        if pet_window_ref.get("shutting_down", False):
             return
-        processes = pet_window_ref.get("processes", [])
-        if process in processes:
-            processes.remove(process)
-        process.deleteLater()
+
+        is_crash = (exit_status == QProcess.ExitStatus.CrashExit or exit_code != 0)
+        status_name = "CrashExit" if exit_status == QProcess.ExitStatus.CrashExit else "NormalExit"
+        log_error(f"[ProcessMonitor] Pet process '{char_name}' terminated (code={exit_code}, status={status_name})")
+
+        if is_crash:
+            now = time.monotonic()
+            history = pet_window_ref.setdefault("respawn_history", {}).setdefault(char_name, [])
+            history = [t for t in history if now - t < 15.0]
+            pet_window_ref["respawn_history"][char_name] = history
+
+            if len(history) >= 3:
+                log_error(f"[ProcessMonitor] Pet process '{char_name}' crashed {len(history)} times in 15s. Respawn suppressed.")
+                return
+
+            history.append(now)
+            log_error(f"[ProcessMonitor] Auto-respawning pet process '{char_name}' in 1.2s...")
+            QTimer.singleShot(1200, lambda m=model, i=idx: _respawn_pet(m, i))
+
+    def _respawn_pet(model, idx):
+        if pet_window_ref.get("shutting_down", False):
+            return
+        log_error(f"[ProcessMonitor] Respawning pet '{model.get('character', '')}' now.")
+        _start_one_pet(model, idx)
 
     settings_process_ref = {}
 
