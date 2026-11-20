@@ -233,7 +233,7 @@ class AmbientPrefetchWorker(QThread):
                         "text": clean_text,
                         "motion": motion,
                         "expression": "",
-                        "tts_text": clean_text,
+                        "tts_text": "",
                         "is_dynamic": True,
                     }
                     self.fetched.emit(self._character, entry)
@@ -244,6 +244,7 @@ class AmbientPrefetchWorker(QThread):
 
 class AmbientChatManager(QObject):
     """Orchestrates zero-latency ambient dialogue prefetch for the desktop pet."""
+    entry_prefetched = Signal(str, dict)  # character, entry
 
     def __init__(self, config_manager, parent=None):
         super().__init__(parent)
@@ -258,6 +259,11 @@ class AmbientChatManager(QObject):
         self._refresh_timer.setInterval(15 * 60 * 1000)
         self._refresh_timer.timeout.connect(self._on_auto_refresh)
         self._refresh_timer.start()
+
+    def cleanup(self):
+        self._refresh_timer.stop()
+        if self._active_worker and self._active_worker.isRunning():
+            self._active_worker.wait(1000)
 
     def set_character(self, character: str):
         if self._current_char != character:
@@ -280,6 +286,7 @@ class AmbientChatManager(QObject):
         if len(pool) >= 2:
             pool.pop(0)
         pool.append(entry)
+        self.entry_prefetched.emit(character, entry)
 
     def _on_worker_finished(self):
         self._active_worker = None

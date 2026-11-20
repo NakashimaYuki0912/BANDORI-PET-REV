@@ -12,9 +12,16 @@ from ambient_chat_manager import (
     gather_desktop_context,
     load_character_few_shots,
     build_ambient_prompt,
+    AmbientChatManager,
 )
+from PySide6.QtCore import QCoreApplication
 
 class TestAmbientChatManager(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if not QCoreApplication.instance():
+            cls.app = QCoreApplication([])
+
     def test_parse_dialogue_motion(self):
         text1 = "……还没休息吗？现在已经很晚了，继续盯着屏幕会增加疲劳。[natural01]"
         clean, motion = parse_dialogue_motion(text1)
@@ -44,6 +51,24 @@ class TestAmbientChatManager(unittest.TestCase):
         self.assertIn("八潮瑠唯", prompt)
         self.assertIn("02:00", prompt)
         self.assertIn("TestUser", prompt)
+
+    def test_entry_prefetched_signal_and_pool(self):
+        manager = AmbientChatManager(None)
+        received = []
+        manager.entry_prefetched.connect(lambda char, entry: received.append((char, entry)))
+
+        entry = {"text": "测试台词", "motion": "smile01", "expression": "", "tts_text": "", "is_dynamic": True}
+        manager._on_entry_fetched("rui", entry)
+
+        self.assertEqual(len(received), 1)
+        self.assertEqual(received[0][0], "rui")
+        self.assertEqual(received[0][1]["text"], "测试台词")
+
+        popped = manager.pop_ambient_entry("rui")
+        self.assertIsNotNone(popped)
+        self.assertEqual(popped["text"], "测试台词")
+        manager.cleanup()
+
 
 if __name__ == "__main__":
     unittest.main()

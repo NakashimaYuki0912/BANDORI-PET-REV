@@ -710,6 +710,7 @@ class PetWindow(QWidget):
         self._greet_reset_timer.timeout.connect(self._reset_greet_count)
         self._speech_bubble = SpeechBubble()
         self._ambient_chat_manager = AmbientChatManager(self._cfg, parent=self)
+        self._ambient_chat_manager.entry_prefetched.connect(self._on_ambient_entry_prefetched)
         self._pixel_mode = self._configured_pet_mode() == "pixel"
         self._pixel_frames = load_pixel_frames() if self._pixel_mode else None
         self._pixel_ready = False
@@ -3348,7 +3349,9 @@ class PetWindow(QWidget):
         """Request TTS for a pet bubble text, with caching."""
         if not self._tts_enabled():
             return
-        clean = (_strip_tts_action_tags or strip_tts_action_tags)(tts_text or text)
+        is_pretranslated = bool(tts_text and tts_text != text)
+        spoken_text = tts_text if is_pretranslated else text
+        clean = (_strip_tts_action_tags or strip_tts_action_tags)(spoken_text)
         if not clean:
             return
         self._ensure_tts_player()
@@ -3359,7 +3362,7 @@ class PetWindow(QWidget):
         # Bump generation so any in-flight worker results are discarded
         self._tts_generation += 1
         config = self._tts_config_snapshot()
-        if tts_text:
+        if is_pretranslated:
             config["tts_language"] = "Japanese"
             config["tts_translate_to_selected_language"] = False
         char = self._current_char or ""
@@ -3371,6 +3374,31 @@ class PetWindow(QWidget):
         worker.error.connect(self._on_pet_tts_error)
         worker.finished.connect(lambda w=worker: self._on_pet_tts_worker_finished(w))
         self._active_speech_worker = worker
+        worker.start()
+
+    def _on_ambient_entry_prefetched(self, character: str, entry: dict):
+        """Silently prewarm TTS audio cache for prefetched ambient dialogue."""
+        if not self._tts_enabled() or not _CachedTTSRequestWorker:
+            return
+        text = entry.get("text", "")
+        if not text:
+            return
+        config = self._tts_config_snapshot()
+        tts_text = entry.get("tts_text", "")
+        is_pretranslated = bool(tts_text and tts_text != text)
+        if is_pretranslated:
+            config["tts_language"] = "Japanese"
+            config["tts_translate_to_selected_language"] = False
+        clean = (_strip_tts_action_tags or strip_tts_action_tags)(tts_text if is_pretranslated else text)
+        if not clean:
+            return
+        cache_path = _tts_cache_path(clean, character, config) if _tts_cache_path else None
+        if cache_path is not None and cache_path.exists() and cache_path.stat().st_size > 44:
+            return
+        worker = _CachedTTSRequestWorker(0, 0, clean, character, config, play_when_ready=False, parent=self)
+        worker.error.connect(lambda _msg: None)
+        worker.finished.connect(lambda w=worker: self._on_pet_tts_worker_finished(w))
+        self._tts_prewarm_workers.append(worker)
         worker.start()
 
     def _on_pet_tts_audio_ready(self, sequence: int, generation: int, audio: bytes, media_type: str):
