@@ -955,6 +955,83 @@ class CachedTTSRequestWorker(TTSRequestWorker):
             self.error.emit(f"TTS: {exc}")
 
 
+# ---------------------------------------------------------------------------
+# OpenAI-compatible TTS synthesis (for ambient dialogue prefetch)
+# ---------------------------------------------------------------------------
+
+def openai_tts_synthesize(
+    text: str,
+    config: dict,
+    voice: str = "",
+    model: str = "",
+) -> bytes | None:
+    """Call an OpenAI-compatible ``/v1/audio/speech`` endpoint to synthesize audio.
+
+    Returns raw MP3 bytes on success, or ``None`` on any failure.
+
+    Config keys used:
+    - ``openai_tts_api_url``  — base URL (default: ``https://api.openai.com/v1``)
+    - ``openai_tts_api_key``  — API key (falls back to ``llm_api_key``)
+    - ``openai_tts_voice``    — voice name (default: ``"alloy"``)
+    - ``openai_tts_model``    — model name (default: ``"tts-1"``)
+    - ``openai_tts_speed``    — speech speed 0.25-4.0 (default: ``1.0``)
+    """
+    api_url = str(config.get("openai_tts_api_url", "") or "").strip()
+    if not api_url:
+        api_url = "https://api.openai.com/v1"
+    api_url = api_url.rstrip("/")
+
+    api_key = str(config.get("openai_tts_api_key", "") or "").strip()
+    if not api_key:
+        api_key = str(config.get("llm_api_key", "") or "").strip()
+    if not api_key:
+        return None
+
+    voice = voice or str(config.get("openai_tts_voice", "") or "").strip() or "alloy"
+    model = model or str(config.get("openai_tts_model", "") or "").strip() or "tts-1"
+    speed = float(config.get("openai_tts_speed", 1.0) or 1.0)
+
+    endpoint = f"{api_url}/audio/speech"
+    payload = {
+        "model": model,
+        "input": text,
+        "voice": voice,
+        "response_format": "mp3",
+        "speed": max(0.25, min(4.0, speed)),
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
+    }
+
+    try:
+        req = urllib.request.Request(
+            endpoint,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            audio_bytes = resp.read()
+        if audio_bytes and len(audio_bytes) > 100:
+            return audio_bytes
+        return None
+    except Exception as exc:
+        print(f"[openai-tts] synthesis failed: {exc}")
+        return None
+
+
+def openai_tts_cache_path(text: str, character: str, config: dict) -> pathlib.Path:
+    """Return the cache ``.mp3`` path for OpenAI TTS output."""
+    voice = str(config.get("openai_tts_voice", "") or "").strip() or "alloy"
+    model = str(config.get("openai_tts_model", "") or "").strip() or "tts-1"
+    speed = str(config.get("openai_tts_speed", 1.0) or 1.0)
+    key = "\n".join([text, character, voice, model, speed])
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+    cache_dir = app_base_dir() / "tts_cache" / "openai_tts" / (character or "default")
+    return cache_dir / f"{digest}.mp3"
+
+
 class TTSPlayer(QObject):
     error = Signal(str)
     level_changed = Signal(float)

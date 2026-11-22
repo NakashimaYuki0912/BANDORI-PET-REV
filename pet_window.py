@@ -3193,6 +3193,29 @@ class PetWindow(QWidget):
 
         dynamic_entry = self._ambient_chat_manager.pop_ambient_entry(self._current_char)
         if dynamic_entry is not None:
+            # Stale context guard: discard entries whose foreground context
+            # has changed significantly since prefetch (e.g. user switched
+            # from CS video to essay reading).
+            if dynamic_entry.get("fg_app"):
+                try:
+                    from process_supervisor import get_foreground_process_info
+                    cur_fg = get_foreground_process_info()
+                    cur_app = str(cur_fg.get("name", "") or "").strip()
+                    if cur_app.lower().endswith(".exe"):
+                        cur_app = cur_app[:-4]
+                    prefetch_app = dynamic_entry.get("fg_app", "")
+                    prefetch_cat = dynamic_entry.get("fg_category", "general")
+                    cur_cat = cur_fg.get("category", "general")
+                    # If the app or category changed, the prefetched content
+                    # may reference the wrong activity — discard it.
+                    if prefetch_app and cur_app and prefetch_app.lower() != cur_app.lower():
+                        if prefetch_cat != cur_cat or prefetch_cat in ("media", "game", "study"):
+                            print(f"[ambient] discarding stale entry: prefetch={prefetch_app} current={cur_app}")
+                            dynamic_entry = None
+                except Exception:
+                    pass
+
+        if dynamic_entry is not None:
             entry = dynamic_entry
         else:
             greetings = self._load_greetings()
@@ -3205,17 +3228,113 @@ class PetWindow(QWidget):
         self._last_ambient_proactive_spoken_at = now
         self._ambient_proactive_cooldown_seconds = random.uniform(900.0, 1500.0)
 
+        self._deliver_ambient_proactive_entry(entry)
+
+    def _deliver_ambient_proactive_entry(self, entry: dict):
+        """Deliver proactive thought using Scheme B (ready-to-speak presentation):
+        Wait silently until TTS audio is synthesized before popping the speech bubble,
+        achieving true zero-latency synchronized audio and speech bubble entrance.
+        """
         text = entry.get("text", "")
         motion = entry.get("motion", "")
         expression = entry.get("expression", "")
+        tts_text = entry.get("tts_text", text)
         if not text:
             return
 
-        anchor = self._pet_bubble_anchor()
-        if motion or expression:
-            self._start_click_motion(motion, expression)
-        self._speech_bubble.show_text(text, anchor)
-        self._speak_pet_text(text, entry.get("tts_text", text))
+        # Case 0: Pre-generated audio from ambient prefetch (OpenAI TTS)
+        pre_audio = entry.get("audio_bytes")
+        pre_format = entry.get("audio_format", "mp3")
+        if pre_audio and len(pre_audio) > 100:
+            self._ensure_tts_player()
+            anchor = self._pet_bubble_anchor()
+            if motion or expression:
+                self._start_click_motion(motion, expression)
+            self._speech_bubble.show_text(text, anchor)
+            if self._tts_player is not None:
+                self._tts_player.enqueue(pre_audio, pre_format)
+            return
+
+        # Case 1: TTS is not enabled or worker unavailable -> pop bubble immediately
+        if not self._tts_enabled() or not _CachedTTSRequestWorker:
+            anchor = self._pet_bubble_anchor()
+            if motion or expression:
+                self._start_click_motion(motion, expression)
+            self._speech_bubble.show_text(text, anchor)
+            return
+
+        is_pretranslated = bool(tts_text and tts_text != text)
+        spoken_text = tts_text if is_pretranslated else text
+        clean = (_strip_tts_action_tags or strip_tts_action_tags)(spoken_text)
+        if not clean:
+            anchor = self._pet_bubble_anchor()
+            if motion or expression:
+                self._start_click_motion(motion, expression)
+            self._speech_bubble.show_text(text, anchor)
+            return
+
+        config = self._tts_config_snapshot()
+        if is_pretranslated:
+            config["tts_language"] = "Japanese"
+            config["tts_translate_to_selected_language"] = False
+        char = self._current_char or ""
+        cache_path = _tts_cache_path(clean, char, config) if _tts_cache_path else None
+
+        # Case 2: Cache hit -> audio already exists on disk, pop bubble and play simultaneously
+        if cache_path is not None and cache_path.exists() and cache_path.stat().st_size > 44:
+            anchor = self._pet_bubble_anchor()
+            if motion or expression:
+                self._start_click_motion(motion, expression)
+            self._speech_bubble.show_text(text, anchor)
+            self._speak_pet_text(text, entry.get("tts_text", text))
+            return
+
+        # Case 3: Cache miss -> Silent background synthesis (Scheme B)
+        # Pet remains completely silent and still until audio is ready
+        self._ensure_tts_player()
+        self._tts_generation += 1
+        generation = self._tts_generation
+
+        worker = _CachedTTSRequestWorker(
+            generation, generation, clean, char, config, play_when_ready=False, parent=self
+        )
+
+        delivered = False
+
+        def _on_ambient_audio_ready(seq: int, gen: int, audio: bytes, media_type: str):
+            nonlocal delivered
+            if delivered or gen != self._tts_generation:
+                return
+            delivered = True
+            if not self.isVisible():
+                return
+            anchor = self._pet_bubble_anchor()
+            if motion or expression:
+                self._start_click_motion(motion, expression)
+            self._speech_bubble.show_text(text, anchor)
+            if self._tts_player is not None:
+                self._tts_player.enqueue(audio, media_type)
+
+        def _on_ambient_fallback(reason: str):
+            nonlocal delivered
+            if delivered or generation != self._tts_generation:
+                return
+            delivered = True
+            print(f"[ambient proactive] TTS delayed or failed ({reason}), falling back to visual bubble")
+            if self.isVisible():
+                anchor = self._pet_bubble_anchor()
+                if motion or expression:
+                    self._start_click_motion(motion, expression)
+                self._speech_bubble.show_text(text, anchor)
+
+        worker.audio_ready.connect(_on_ambient_audio_ready)
+        worker.error.connect(lambda msg: _on_ambient_fallback(f"error: {msg}"))
+        worker.finished.connect(lambda w=worker: self._on_pet_tts_worker_finished(w))
+        self._active_speech_worker = worker
+        worker.start()
+
+        # Timeout guard: 12 seconds max waiting time for remote TTS
+        QTimer.singleShot(12000, lambda: _on_ambient_fallback("timeout > 12s"))
 
     def _compact_window_target(self):
         bounds = None

@@ -18,6 +18,7 @@ import random
 import re
 import sys
 import threading
+import time
 import urllib.request
 import urllib.error
 from pathlib import Path
@@ -147,12 +148,36 @@ def gather_desktop_context(config_manager=None) -> dict[str, str]:
 
     user_name = config_manager.get("user_name", "你") if config_manager else "你"
 
+    # Foreground window & app activity snapshot
+    fg_app = ""
+    fg_title = ""
+    fg_category = "general"
+    try:
+        from process_supervisor import get_foreground_process_info
+        fg = get_foreground_process_info()
+        fg_name = str(fg.get("name", "") or "").strip()
+        fg_title = str(fg.get("title", "") or "").strip()
+        fg_category = fg.get("category", "general")
+        if fg_name.lower().endswith(".exe"):
+            fg_name = fg_name[:-4]
+        if len(fg_title) > 60:
+            fg_title = fg_title[:60] + "..."
+        fg_app = fg_name
+    except Exception:
+        pass
+
+    is_late_night = (0 <= hour < 5 or hour >= 23)
+
     return {
         "time_str": now_str,
         "time_phase": time_phase,
         "music": music_info,
         "weather": weather_info,
         "user_name": user_name,
+        "fg_app": fg_app,
+        "fg_title": fg_title,
+        "fg_category": fg_category,
+        "is_late_night": is_late_night,
     }
 
 
@@ -288,18 +313,57 @@ def build_ambient_prompt_bundle(character: str, context: dict[str, str], config_
     band_name, mates, cross_rels = get_character_band_info(char_key)
     candidate_targets = mates + [r for r in cross_rels if r not in mates]
 
+    # Screen activity context
+    fg_app = context.get("fg_app", "")
+    fg_title = context.get("fg_title", "")
+    fg_category = context.get("fg_category", "general")
+    is_late_night = bool(context.get("is_late_night", False))
+    fg_display = f"{fg_app}（窗口标题：{fg_title}）" if fg_title else fg_app
+
     # Select topic mode
     if topic_mode is None:
+        modes = []
+        # Case 1: Late night (23:00 - 05:00) with gaming or media active
+        if is_late_night and (fg_category in ("game", "media") or any(kw in fg_app.lower() for kw in ("potplayer", "bilibili", "video", "steam"))):
+            modes.extend(["late_night_sleep_urge", "late_night_sleep_urge", "late_night_sleep_urge"])
+        # Case 2: Deep study / programming / writing session
+        elif fg_category == "study":
+            modes.extend(["study_care", "study_care"])
+        # Case 3: Daytime / evening video or media watching
+        elif fg_category == "media" or "potplayer" in fg_app.lower() or "bilibili" in fg_app.lower():
+            modes.extend(["media_companion", "media_companion"])
+
         if candidate_targets:
             # 50% character banter / teasing, 30% band daily / hobby, 20% casual companion
-            modes = ["character_banter", "character_banter", "band_daily", "casual_ambient"]
+            modes.extend(["character_banter", "character_banter", "band_daily", "casual_ambient"])
         else:
-            modes = ["band_daily", "casual_ambient"]
+            modes.extend(["band_daily", "casual_ambient"])
         topic_mode = random.choice(modes)
 
     user_name = context.get("user_name", "你")
 
-    if topic_mode == "character_banter" and candidate_targets:
+    if topic_mode == "late_night_sleep_urge" and fg_display:
+        topic_section = f"""【本次碎碎念核心主题：深夜玩游戏/看视频催促早睡与生动吐槽（重点！）】
+现在已经是深夜/凌晨（系统时间：{context.get('time_str')}），你注意到{user_name}屏幕前居然还在运行【{fg_display}】！
+请以你在原作中的真实性格与独特视角（如傲娇吐槽、严肃管教、温柔担忧或活泼催促）：
+- 明确吐槽或点出他这么晚了居然还在沉迷【{fg_app or '游戏/视频'}】，再不睡觉明天绝对吃不消。
+- 催促他快关掉程序去上床睡觉，表达真实的羁绊与关切。
+- 严禁机械背诵系统时间，要完全化作生动真切的角色口吻。"""
+        user_cue = f"（夜深了，你看着屏幕前还在运行{fg_app}的{user_name}，忍不住开口催促他睡觉）"
+    elif topic_mode == "study_care" and fg_display:
+        topic_section = f"""【本次碎碎念核心主题：学习/工作劳逸结合与暖心关怀（重点！）】
+你注意到{user_name}正对着屏幕认真专注于【{fg_display}】。
+请以你在原作中的真实性格与独特视角：
+- 看到他写代码/学习/工作这么投入，提醒他不要一直紧绷着，该稍微休息一下眼睛、喝口水或活动活动肩膀。
+- 带有你专属的性格色彩（例如傲娇地假装只是顺便提醒、温柔地送上鼓励、或是好奇他在忙些什么）。"""
+        user_cue = f"（你在一旁看着{user_name}对着{fg_app}忙碌专注的身影，轻声提醒他注意劳逸结合）"
+    elif topic_mode == "media_companion" and fg_display:
+        topic_section = f"""【本次碎碎念核心主题：影音娱乐陪伴与趣味吐槽】
+你注意到{user_name}正在用【{fg_display}】观看视频或动漫。
+请以你在原作中的真实性格与独特视角：
+- 随口发表一两句有趣的调侃（比如好奇剧情、问问在看什么有趣的番剧/视频、或是提醒别一口气看太久忘了时间）。"""
+        user_cue = f"（你好奇地看了一眼正在播放的{fg_app}，随口说了句感想）"
+    elif topic_mode == "character_banter" and candidate_targets:
         targets_str = "、".join(candidate_targets[:6])
         topic_section = f"""【本次碎碎念核心主题：对同伴/其他角色的吐槽与日常爆料（重点！）】
 请以你在原作中的真实性格与独特视角，生动地吐槽、调侃或聊起你的队友或认识的朋友（可提起对象：{targets_str} 等）。
@@ -331,8 +395,9 @@ def build_ambient_prompt_bundle(character: str, context: dict[str, str], config_
 【角色原版经典台词范例】：
 {few_shots_text}
 
-【当前真实桌面环境（仅供微弱氛围参考，严禁直接作为台词主体）】：
+【当前真实桌面环境（可自然感知并融入台词，严禁机械念报）】：
 - 系统当前时间：{context.get('time_str')}（{context.get('time_phase')}）
+- 用户屏幕前台活动：{fg_display or '桌面/日常'}
 - 用户电脑正在播放的音乐：{context.get('music')}
 - 外部天气状况：{context.get('weather') or '舒适晴朗'}
 - 陪伴对象昵称：{user_name}
@@ -431,7 +496,52 @@ class AmbientPrefetchWorker(QThread):
                         "expression": "",
                         "tts_text": "",
                         "is_dynamic": True,
+                        "fg_app": context.get("fg_app", ""),
+                        "fg_category": context.get("fg_category", "general"),
+                        "prefetch_time": time.monotonic(),
                     }
+
+                    # Pre-generate OpenAI TTS audio if configured
+                    ambient_tts = str(self._cfg.get("ambient_tts_provider", "off") or "off").strip().lower()
+                    if ambient_tts == "openai":
+                        try:
+                            from tts_manager import openai_tts_synthesize, openai_tts_cache_path, strip_tts_action_tags
+                            tts_text = strip_tts_action_tags(clean_text)
+                            if tts_text:
+                                cfg_dict = {}
+                                for k in ("openai_tts_api_url", "openai_tts_api_key",
+                                           "openai_tts_voice", "openai_tts_model",
+                                           "openai_tts_speed", "llm_api_key"):
+                                    cfg_dict[k] = self._cfg.get(k, "")
+
+                                # Check cache first
+                                cache_path = openai_tts_cache_path(tts_text, self._character, cfg_dict)
+                                if cache_path.exists() and cache_path.stat().st_size > 100:
+                                    entry["audio_bytes"] = cache_path.read_bytes()
+                                    entry["audio_format"] = "mp3"
+                                else:
+                                    audio = openai_tts_synthesize(tts_text, cfg_dict)
+                                    if audio:
+                                        entry["audio_bytes"] = audio
+                                        entry["audio_format"] = "mp3"
+                                        # Cache to disk
+                                        try:
+                                            cache_path.parent.mkdir(parents=True, exist_ok=True)
+                                            import tempfile, os as _os
+                                            fd, tmp = tempfile.mkstemp(
+                                                suffix=".mp3", prefix=".tmp_",
+                                                dir=str(cache_path.parent)
+                                            )
+                                            try:
+                                                _os.write(fd, audio)
+                                            finally:
+                                                _os.close(fd)
+                                            _os.replace(tmp, str(cache_path))
+                                        except Exception as cache_exc:
+                                            print(f"[ambient-tts] cache write failed: {cache_exc}")
+                        except Exception as tts_exc:
+                            print(f"[ambient-tts] OpenAI TTS prefetch failed: {tts_exc}")
+
                     self.fetched.emit(self._character, entry)
         except Exception:
             # Silent fallback; standard pet flow is unaffected

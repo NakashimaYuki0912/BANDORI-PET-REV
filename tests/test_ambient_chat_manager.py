@@ -94,6 +94,58 @@ class TestAmbientChatManager(unittest.TestCase):
         self.assertEqual(popped["text"], "测试台词")
         manager.cleanup()
 
+    def test_late_night_sleep_urge_topic(self):
+        from ambient_chat_manager import build_ambient_prompt_bundle
+        ctx = {
+            "time_str": "01:30",
+            "time_phase": "深夜",
+            "music": "None",
+            "weather": "晴",
+            "user_name": "TestUser",
+            "fg_app": "GenshinImpact",
+            "fg_title": "原神",
+            "fg_category": "game",
+            "is_late_night": True,
+        }
+        prompt, user_cue = build_ambient_prompt_bundle("arisa", ctx, topic_mode="late_night_sleep_urge")
+        self.assertIn("GenshinImpact", prompt)
+        self.assertIn("睡觉", prompt)
+        self.assertIn("市谷有咲", prompt)
+
+    def test_study_care_topic(self):
+        from ambient_chat_manager import build_ambient_prompt_bundle
+        ctx = {
+            "time_str": "15:30",
+            "time_phase": "下午",
+            "music": "None",
+            "weather": "晴",
+            "user_name": "TestUser",
+            "fg_app": "Code",
+            "fg_title": "BANDORI-PET-REV - VS Code",
+            "fg_category": "study",
+            "is_late_night": False,
+        }
+        prompt, user_cue = build_ambient_prompt_bundle("arisa", ctx, topic_mode="study_care")
+        self.assertIn("Code", prompt)
+        self.assertIn("休息", prompt)
+
+    def test_media_companion_topic(self):
+        from ambient_chat_manager import build_ambient_prompt_bundle
+        ctx = {
+            "time_str": "16:00",
+            "time_phase": "下午",
+            "music": "None",
+            "weather": "晴",
+            "user_name": "TestUser",
+            "fg_app": "PotPlayer",
+            "fg_title": "MyAnime.mp4 - PotPlayer",
+            "fg_category": "media",
+            "is_late_night": False,
+        }
+        prompt, user_cue = build_ambient_prompt_bundle("arisa", ctx, topic_mode="media_companion")
+        self.assertIn("PotPlayer", prompt)
+        self.assertIn("视频", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

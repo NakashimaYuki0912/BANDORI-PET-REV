@@ -196,6 +196,12 @@ DEFAULTS = {
     "weather_project_id": "",
     "weather_api_host": "",
     "weather_city": "",
+    "ambient_tts_provider": "off",
+    "openai_tts_api_url": "",
+    "openai_tts_api_key": "",
+    "openai_tts_voice": "alloy",
+    "openai_tts_model": "tts-1",
+    "openai_tts_speed": 1.0,
 }
 
 MODEL_DEFAULTS = {
