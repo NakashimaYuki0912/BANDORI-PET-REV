@@ -64,6 +64,11 @@ try:
 except ImportError:
     pass
 
+try:
+    from todo_manager import TodoSupervisionManager
+except ImportError:
+    TodoSupervisionManager = None
+
 from win32_constants import (
     DWMWA_EXTENDED_FRAME_BOUNDS,
     DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND,
@@ -111,6 +116,10 @@ _CHAT_ACTION_TAG_MAP = {
     "mitore": "mitore",
     "nod": "nod",
     "f": "f",
+    "shy": "shy",
+    "chomama": "shy",
+    "tere": "shy",
+    "tsundere_shy": "shy",
 }
 
 if os.name == "nt":
@@ -296,6 +305,9 @@ class SpeechBubble(QWidget):
     _MAX_WIDTH = 300
     _TAIL_H = 10
 
+    character_typed = Signal(str)
+    typing_finished = Signal()
+
     def __init__(self):
         super().__init__(None)
         self.setWindowFlags(
@@ -324,13 +336,24 @@ class SpeechBubble(QWidget):
         self._fade_anim.setDuration(500)
         self._fade_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._fade_anim.finished.connect(self.hide)
+        self._pos_anim = QPropertyAnimation(self, b"pos", self)
+        self._pos_anim.setDuration(220)
+        self._pos_anim.setEasingCurve(QEasingCurve.Type.OutBack)
 
     def _on_typewriter_tick(self):
-        self._visible_chars += 1
-        if self._visible_chars >= len(self._text):
+        if self._visible_chars < len(self._text):
+            ch = self._text[self._visible_chars]
+            self._visible_chars += 1
+            self.character_typed.emit(ch)
+            if self._visible_chars >= len(self._text):
+                self._typewriter_timer.stop()
+                self._hide_timer.start(self._display_ms)
+                self.typing_finished.emit()
+            self.update()
+        else:
             self._typewriter_timer.stop()
             self._hide_timer.start(self._display_ms)
-        self.update()
+            self.typing_finished.emit()
 
     def show_text(self, text: str, anchor: QPoint, display_ms: int = 3500, typewriter: bool = True):
         self._hide_timer.stop()
@@ -394,14 +417,21 @@ class SpeechBubble(QWidget):
         self._tail_x = max(self._PADDING + 8,
                            min(self._tail_x, w - self._PADDING - 8))
 
-        self.move(clamped_x, clamped_y)
+        start_y = clamped_y + 12
+        self.move(clamped_x, start_y)
         self.show()
+        self._pos_anim.stop()
+        self._pos_anim.setStartValue(QPoint(clamped_x, start_y))
+        self._pos_anim.setEndValue(QPoint(clamped_x, clamped_y))
+        self._pos_anim.start()
         if typewriter and len(text) > 1:
             self._visible_chars = 1
+            self.character_typed.emit(self._text[0])
             self._typewriter_timer.start()
         else:
             self._visible_chars = len(text)
             self._hide_timer.start(display_ms)
+            self.typing_finished.emit()
 
     def _begin_fade(self):
         self._fade_anim.setStartValue(1.0)
@@ -691,6 +721,14 @@ class PetWindow(QWidget):
                 self._cfg.get("live2d_quality", "balanced")
             )
             self._live2d_scale = _clamp_live2d_scale(self._cfg.get("live2d_scale", 100) or 100)
+        self._todo_manager = None
+        if TodoSupervisionManager:
+            try:
+                self._todo_manager = TodoSupervisionManager(self._current_char, self._cfg, self)
+                self._todo_manager.alert_ready.connect(self._on_supervision_alert)
+                self._todo_manager.confirmation_ready.connect(self._on_supervision_confirmation)
+            except Exception:
+                self._todo_manager = None
         self._radial_menu = None
         self._radial_media_item = None
         self._compact_ai_window = None
@@ -709,8 +747,17 @@ class PetWindow(QWidget):
         self._greet_reset_timer.setInterval(20000)
         self._greet_reset_timer.timeout.connect(self._reset_greet_count)
         self._speech_bubble = SpeechBubble()
+        self._speech_bubble.character_typed.connect(self._on_bubble_character_typed)
+        self._speech_bubble.typing_finished.connect(self._on_bubble_typing_finished)
         self._ambient_chat_manager = AmbientChatManager(self._cfg, parent=self)
         self._ambient_chat_manager.entry_prefetched.connect(self._on_ambient_entry_prefetched)
+        self._last_ambient_proactive_spoken_at = time.monotonic()
+        self._ambient_proactive_cooldown_seconds = random.uniform(900.0, 1500.0)
+        self._last_seen_media_title = ""
+        self._ambient_proactive_timer = QTimer(self)
+        self._ambient_proactive_timer.setInterval(45000)
+        self._ambient_proactive_timer.timeout.connect(self._check_ambient_proactive_thought)
+        self._ambient_proactive_timer.start()
         self._pixel_mode = self._configured_pet_mode() == "pixel"
         self._pixel_frames = load_pixel_frames() if self._pixel_mode else None
         self._pixel_ready = False
@@ -718,6 +765,8 @@ class PetWindow(QWidget):
         self._radial_menu_prewarmed = False
         self._motion_guard_token = 0
         self._expression_guard_token = 0
+        self._custom_action_params = set()
+        self._custom_action_param_token = 0
         self._is_startup = True
         # TTS integration state
         self._tts_player = None
@@ -844,6 +893,7 @@ class PetWindow(QWidget):
         self._live2d_widget.set_click_callback(self._on_click)
         self._live2d_widget.set_right_click_callback(self._on_right_click)
         self._live2d_widget.set_double_click_callback(self._on_double_click)
+        self._live2d_widget.set_middle_click_callback(self.toggle_compact_capsule)
         self._live2d_widget.set_fps(self._fps)
         self._live2d_widget.set_render_quality(self._live2d_quality)
         self._live2d_widget.model_loaded.connect(self._on_live2d_model_loaded)
@@ -853,6 +903,7 @@ class PetWindow(QWidget):
         self._pixel_widget.set_window_drag_callback(self._on_drag)
         self._pixel_widget.set_click_callback(self._on_click)
         self._pixel_widget.set_right_click_callback(self._on_right_click)
+        self._pixel_widget.set_middle_click_callback(self.toggle_compact_capsule)
         self._stack.addWidget(self._pixel_widget)
 
         # 屏幕切换时同步 DPR 和窗口尺寸（延迟一帧等 windowHandle 就绪）
@@ -1170,6 +1221,8 @@ class PetWindow(QWidget):
         self._schedule_position_save()
 
     def hideEvent(self, event):
+        if self._speech_bubble is not None:
+            self._speech_bubble.hide()
         if self._compact_ai_window is not None:
             self._compact_ai_window.hide()
         if self._media_overlay is not None:
@@ -1231,6 +1284,8 @@ class PetWindow(QWidget):
             self._live2d_widget.update()
 
     def closeEvent(self, event):
+        if self._speech_bubble is not None:
+            self._speech_bubble.hide()
         self._close_chat_process()
         self._close_compact_ai_window()
         self._close_settings_process()
@@ -1263,6 +1318,9 @@ class PetWindow(QWidget):
 
         chat_action = menu.addAction(_tr("PetWindow.tray_chat"))
         chat_action.triggered.connect(self._open_chat)
+
+        capsule_action = menu.addAction(_tr("PetWindow.tray_quick_chat", "快捷对话胶囊"))
+        capsule_action.triggered.connect(self.toggle_compact_capsule)
 
         settings_action = menu.addAction(_tr("PetWindow.tray_settings"))
         settings_action.triggered.connect(self._open_settings)
@@ -1353,12 +1411,18 @@ class PetWindow(QWidget):
         self._close_chat_process()
         self._current_char = character
         self._current_costume = costume
+        if self._todo_manager is not None:
+            self._todo_manager.set_character(character)
         self._live2d_widget.set_model_path(path)
         self._sync_current_model_entry(path)
         if self._pixel_mode and not self._load_pixel_for_current_character():
             self._enable_live2d_mode(save=False)
         self._update_tooltip()
         self._sync_compact_ai_window(allow_create=True)
+        if self._compact_ai_window is not None:
+            if "compact_ai_dialog_mode" in data:
+                self._compact_ai_window.set_dialog_mode(data["compact_ai_dialog_mode"])
+            self._compact_ai_window.refresh_theme()
         self._save_config()
         # Bump TTS generation so in-flight workers are ignored
         self._tts_generation += 1
@@ -1643,8 +1707,11 @@ class PetWindow(QWidget):
             "compact_ai_window_enabled",
             "compact_ai_window_opacity",
             "compact_ai_window_font_size",
+            "compact_ai_show_chat_output",
+            "compact_ai_dialog_mode",
             "compact_ai_window_background_color",
             "compact_ai_window_text_color",
+            "compact_ai_capsule_style",
             "ai_event_overlay_enabled",
             "chat_integration_enabled",
             "chat_integration_overlay_enabled",
@@ -1668,10 +1735,16 @@ class PetWindow(QWidget):
                 self._cfg.set("compact_ai_window_opacity", data["compact_ai_window_opacity"])
             if "compact_ai_window_font_size" in data:
                 self._cfg.set("compact_ai_window_font_size", data["compact_ai_window_font_size"])
+            if "compact_ai_show_chat_output" in data:
+                self._cfg.set("compact_ai_show_chat_output", bool(data["compact_ai_show_chat_output"]))
+            if "compact_ai_dialog_mode" in data:
+                self._cfg.set("compact_ai_dialog_mode", data["compact_ai_dialog_mode"])
             if "compact_ai_window_background_color" in data:
                 self._cfg.set("compact_ai_window_background_color", data["compact_ai_window_background_color"])
             if "compact_ai_window_text_color" in data:
                 self._cfg.set("compact_ai_window_text_color", data["compact_ai_window_text_color"])
+            if "compact_ai_capsule_style" in data:
+                self._cfg.set("compact_ai_capsule_style", data["compact_ai_capsule_style"])
             if "ai_event_overlay_enabled" in data:
                 self._cfg.set("ai_event_overlay_enabled", bool(data["ai_event_overlay_enabled"]))
             if "chat_integration_overlay_enabled" in data:
@@ -1736,6 +1809,10 @@ class PetWindow(QWidget):
         if "live2d_scale" in data:
             self.set_live2d_scale(data["live2d_scale"])
         self._sync_compact_ai_window(allow_create=True)
+        if self._compact_ai_window is not None:
+            if "compact_ai_dialog_mode" in data:
+                self._compact_ai_window.set_dialog_mode(data["compact_ai_dialog_mode"])
+            self._compact_ai_window.refresh_theme()
         if self._cfg and ("models" in data or "model_action_settings" in data):
             self._cfg.load()
         if "model_action_settings" in data and self._cfg:
@@ -2790,7 +2867,7 @@ class PetWindow(QWidget):
 
     def _on_radial_chat(self):
         self._note_user_interaction()
-        self._open_chat()
+        self.toggle_compact_capsule()
 
     def _open_chat(self):
         if self._chat_process is not None and self._chat_process.state() != QProcess.ProcessState.NotRunning:
@@ -2858,6 +2935,14 @@ class PetWindow(QWidget):
                 self.set_live2d_scale(int(line.split("\t", 1)[1]))
             except (ValueError, IndexError):
                 pass
+        elif line.startswith("TODO\t"):
+            parts = line.split("\t", 2)
+            if len(parts) >= 3 and parts[1] == self._current_char:
+                if self._todo_manager is not None:
+                    self._todo_manager.parse_text_input(parts[2])
+            elif len(parts) == 2:
+                if self._todo_manager is not None:
+                    self._todo_manager.parse_text_input(parts[1])
         elif line.startswith("SETTINGS\t"):
             try:
                 if self._cfg:
@@ -3005,9 +3090,132 @@ class PetWindow(QWidget):
                 self._cfg,
             )
             self._compact_ai_window.action_triggered.connect(self._on_chat_action)
+            self._compact_ai_window.assistant_reply_finished.connect(self._on_compact_ai_reply)
+            if self._todo_manager is not None:
+                self._compact_ai_window.set_todo_manager(self._todo_manager)
         self._compact_ai_window.set_character(self._current_char)
         self._compact_ai_window.refresh_theme()
         return self._compact_ai_window
+
+    def toggle_compact_capsule(self):
+        self._note_user_interaction()
+        win = self._ensure_compact_ai_window()
+        if win.isVisible():
+            win.hide()
+        else:
+            self._sync_compact_ai_window(allow_create=True, force_visible=True, reposition=True)
+            win.activateWindow()
+            win.focus_input()
+
+    def _on_compact_ai_reply(self, text: str, actions: list):
+        if not text:
+            return
+        anchor = self._pet_bubble_anchor()
+        if self._compact_ai_window is not None and self._compact_ai_window.isVisible():
+            win_geo = self._compact_ai_window.geometry()
+            # If the compact capsule sits right above the character's head, offset anchor above the capsule
+            if (
+                abs(win_geo.center().x() - anchor.x()) < max(win_geo.width() // 2, 80)
+                and win_geo.bottom() >= anchor.y() - 140
+                and win_geo.top() <= anchor.y() + 60
+            ):
+                anchor = QPoint(anchor.x(), win_geo.top() - 4)
+        self._speech_bubble.show_text(text, anchor, max(5000, len(text) * 120))
+
+    def _on_supervision_alert(self, text: str, actions: list):
+        if not text:
+            return
+        if actions:
+            for act in actions:
+                self._on_chat_action(act)
+        anchor = self._pet_bubble_anchor()
+        if self._compact_ai_window is not None and self._compact_ai_window.isVisible():
+            win_geo = self._compact_ai_window.geometry()
+            if (
+                abs(win_geo.center().x() - anchor.x()) < max(win_geo.width() // 2, 80)
+                and win_geo.bottom() >= anchor.y() - 140
+                and win_geo.top() <= anchor.y() + 60
+            ):
+                anchor = QPoint(anchor.x(), win_geo.top() - 4)
+        self._speech_bubble.show_text(text, anchor, max(6000, len(text) * 140))
+        self._speak_pet_text(text)
+
+    def _on_supervision_confirmation(self, text: str, actions: list):
+        if not text:
+            return
+        if actions:
+            for act in actions:
+                self._on_chat_action(act)
+        anchor = self._pet_bubble_anchor()
+        if self._compact_ai_window is not None and self._compact_ai_window.isVisible():
+            win_geo = self._compact_ai_window.geometry()
+            if (
+                abs(win_geo.center().x() - anchor.x()) < max(win_geo.width() // 2, 80)
+                and win_geo.bottom() >= anchor.y() - 140
+                and win_geo.top() <= anchor.y() + 60
+            ):
+                anchor = QPoint(anchor.x(), win_geo.top() - 4)
+        self._speech_bubble.show_text(text, anchor, max(4500, len(text) * 120))
+        self._speak_pet_text(text)
+
+    def _on_bubble_character_typed(self, ch: str):
+        if self._pixel_mode or self._live2d_widget is None:
+            return
+        if self._tts_player is not None and getattr(self._tts_player, "is_playing", False):
+            return
+        if not ch or ch in " \t\r\n，。！？、…—～“”‘’\"'.,!?;:()[]{}":
+            return
+        level = random.uniform(0.30, 0.55)
+        self._live2d_widget.set_lip_sync_level(level)
+
+    def _on_bubble_typing_finished(self):
+        if self._pixel_mode or self._live2d_widget is None:
+            return
+        if self._tts_player is not None and getattr(self._tts_player, "is_playing", False):
+            return
+        self._live2d_widget.set_lip_sync_level(0.0)
+
+    def _check_ambient_proactive_thought(self):
+        if not self.isVisible() or self._is_pet_dragging():
+            return
+        if self._cfg and not self._cfg.get("ambient_proactive_chat_enabled", True):
+            return
+        if self._radial_menu is not None and self._radial_menu.isVisible():
+            return
+        if self._speech_bubble is not None and self._speech_bubble.isVisible():
+            return
+        now = time.monotonic()
+        idle_seconds = now - self._last_user_interaction_at
+        if idle_seconds < 20.0 or idle_seconds > 2700.0:
+            return
+        if now - self._last_ambient_proactive_spoken_at < self._ambient_proactive_cooldown_seconds:
+            return
+
+        dynamic_entry = self._ambient_chat_manager.pop_ambient_entry(self._current_char)
+        if dynamic_entry is not None:
+            entry = dynamic_entry
+        else:
+            greetings = self._load_greetings()
+            daily_entries = complete_daily_chat_entries(greetings)
+            if daily_entries:
+                entry = random.choice(daily_entries)
+            else:
+                return
+
+        self._last_ambient_proactive_spoken_at = now
+        self._ambient_proactive_cooldown_seconds = random.uniform(900.0, 1500.0)
+
+        text = entry.get("text", "")
+        motion = entry.get("motion", "")
+        expression = entry.get("expression", "")
+        if not text:
+            return
+
+        anchor = self._pet_bubble_anchor()
+        if motion or expression:
+            self._start_click_motion(motion, expression)
+        self._speech_bubble.show_text(text, anchor)
+        self._speak_pet_text(text, entry.get("tts_text", text))
 
     def _compact_window_target(self):
         bounds = None
@@ -3107,25 +3315,27 @@ class PetWindow(QWidget):
 
         def _find_motion(tag: str) -> str | None:
             tag_low = tag.lower()
-            candidates = []
             if tag_low == "thinking":
-                candidates.extend(["thinking", "nf", "nnf", "eeto", "odoodo"])
+                candidate_tiers = [["thinking"], ["nf", "nnf"], ["eeto", "odoodo"]]
+            elif tag_low in {"shy", "chomama", "tere", "tsundere_shy"}:
+                candidate_tiers = [["shame"], ["pui"], ["odoodo"], ["smile"]]
             else:
-                candidates.append(tag_low)
+                candidate_tiers = [[tag_low]]
 
-            matches = []
-            for candidate in candidates:
-                candidate_prefix = f"{char_lower}_{candidate}"
-                for mname in motion_names:
-                    mlow = mname.lower()
-                    if mlow == candidate or mlow.startswith(candidate):
-                        matches.append(mname)
-                    elif mlow == candidate_prefix or mlow.startswith(candidate_prefix):
-                        matches.append(mname)
-                    elif re.search(rf"(^|[_\-]){re.escape(candidate)}($|[_\-]?\d)", mlow):
-                        matches.append(mname)
-            if matches:
-                return random.choice(matches)
+            for tier in candidate_tiers:
+                matches = []
+                for candidate in tier:
+                    candidate_prefix = f"{char_lower}_{candidate}"
+                    for mname in motion_names:
+                        mlow = mname.lower()
+                        if mlow == candidate or mlow.startswith(candidate):
+                            matches.append(mname)
+                        elif mlow == candidate_prefix or mlow.startswith(candidate_prefix):
+                            matches.append(mname)
+                        elif re.search(rf"(^|[_\-]){re.escape(candidate)}($|[_\-]?\d)", mlow):
+                            matches.append(mname)
+                if matches:
+                    return random.choice(matches)
             try:
                 if hasattr(model.modelSetting, "resolveMotion") and model.modelSetting.resolveMotion(tag, 0):
                     return tag
@@ -3152,7 +3362,36 @@ class PetWindow(QWidget):
 
         mapped = tag_map.get(normalized, normalized)
 
-        motion = _find_motion(mapped)
+        is_shy_action = (mapped == "shy" or normalized in {"shy", "chomama", "tere", "tsundere_shy"})
+        if is_shy_action:
+            motion = _find_motion("shy") or _find_motion("shame") or _find_motion("pui") or _find_motion("odoodo") or _find_motion("smile")
+            shy_params = {
+                "PARAM_EYE_L_OPEN": 0.0,
+                "PARAM_EYE_R_OPEN": 0.0,
+                "PARAM_EYE_L_SMILE": 1.0,
+                "PARAM_EYE_R_SMILE": 1.0,
+                "PARAM_BROW_L_ANGLE": 0.45,
+                "PARAM_BROW_R_ANGLE": 0.45,
+                "PARAM_BROW_L_FORM": -1.0,
+                "PARAM_BROW_R_FORM": -1.0,
+                "PARAM_BROW_L_Y": -0.6,
+                "PARAM_BROW_R_Y": -0.6,
+                "PARAM_CHEEK": 1.0,
+                "PARAM_CHEEK2": 1.0,
+                "PARAM_MOUTH_FORM_01": -1.0,
+                "PARAM_MOUTH_SCALE": -0.3,
+            }
+            if hasattr(model, "SetParameterValue"):
+                for pid, val in shy_params.items():
+                    model.SetParameterValue(pid, val, 1.0)
+                if not hasattr(self, "_custom_action_params"):
+                    self._custom_action_params = set()
+                self._custom_action_params.update(shy_params.keys())
+                self._custom_action_param_token = getattr(self, "_custom_action_param_token", 0) + 1
+                token = self._custom_action_param_token
+                QTimer.singleShot(4200, lambda t=token: self._clear_custom_action_parameters_if_current(t))
+        else:
+            motion = _find_motion(mapped)
         motion_started = False
         if motion:
             self._expression_guard_token += 1
@@ -3182,14 +3421,16 @@ class PetWindow(QWidget):
                 except Exception:
                     pass
 
-        exp = _find_expression(mapped)
+        exp = _find_expression("shame" if is_shy_action else mapped)
         if exp:
             try:
                 model.SetExpression(exp)
                 if not motion_started:
-                    self._schedule_default_expression_restore()
+                    self._schedule_default_expression_restore(delay_ms=4000 if is_shy_action else 3000)
             except Exception:
                 pass
+        elif is_shy_action:
+            self._schedule_default_expression_restore(delay_ms=4000)
 
     def _on_radial_costume(self):
         self._note_user_interaction()
@@ -3260,6 +3501,12 @@ class PetWindow(QWidget):
 
     def _on_media_snapshot_ready(self, snapshot):
         self._media_last_snapshot = snapshot
+        if snapshot and getattr(snapshot, "playback_status", "").lower() == "playing":
+            title = getattr(snapshot, "title", "").strip()
+            if title and title != self._last_seen_media_title:
+                self._last_seen_media_title = title
+                if self._ambient_chat_manager and self._current_char:
+                    self._ambient_chat_manager.trigger_prefetch(self._current_char)
         if not self._media_overlay_enabled:
             return
         # Primary display: push to radial menu media item
@@ -3502,13 +3749,28 @@ class PetWindow(QWidget):
         self._motion_guard_token += 1
         QTimer.singleShot(0, lambda t=self._motion_guard_token: self._restore_default_motion(t, force_clear=True))
 
+    def _clear_custom_action_parameters(self):
+        if not getattr(self, "_custom_action_params", None):
+            return
+        model = self._live2d_widget.model if self._live2d_widget else None
+        if model and hasattr(model, "DeleteParameterValue"):
+            for pid in list(self._custom_action_params):
+                model.DeleteParameterValue(pid)
+        self._custom_action_params.clear()
+
+    def _clear_custom_action_parameters_if_current(self, token: int):
+        if token != getattr(self, "_custom_action_param_token", 0):
+            return
+        self._clear_custom_action_parameters()
+
     def _restore_default_motion(self, token: int, force_clear: bool = False):
         if token != self._motion_guard_token:
             return
+        self._clear_custom_action_parameters()
         model = self._live2d_widget.model
         if model is None:
             return
-        if not self._live2d_idle_actions_enabled:
+        if not getattr(self, "_live2d_idle_actions_enabled", True):
             if force_clear:
                 try:
                     model.ClearMotions()
@@ -3527,14 +3789,14 @@ class PetWindow(QWidget):
     def _start_idle_motion_if_current(self, token: int, smooth: bool):
         if token != self._motion_guard_token:
             return
-        if not self._live2d_idle_actions_enabled:
+        if not getattr(self, "_live2d_idle_actions_enabled", True):
             return
         self._start_idle_motion(smooth=smooth)
 
     def _restore_default_if_finished(self, token: int):
         if token != self._motion_guard_token:
             return
-        if not self._live2d_idle_actions_enabled:
+        if not getattr(self, "_live2d_idle_actions_enabled", True):
             return
         model = self._live2d_widget.model
         if model is None:
@@ -3615,6 +3877,7 @@ class PetWindow(QWidget):
         self._apply_default_expression(model)
 
     def _apply_default_expression(self, model):
+        self._clear_custom_action_parameters()
         if time.monotonic() < self._click_expression_hold_until:
             return
         try:
@@ -3932,6 +4195,8 @@ class PetWindow(QWidget):
         self._start_media_overlay_polling()
         if self._show_pos_set and self._is_position_on_screen():
             self._sync_compact_ai_window(allow_create=True)
+            if self._compact_ai_window is not None:
+                self._compact_ai_window.refresh_theme()
             self._sync_media_overlay_position()
             return
         # Fallback: 在桌宠实际所在的屏幕上居中（跨屏自适应）
@@ -3945,6 +4210,10 @@ class PetWindow(QWidget):
         self._show_pos_set = True
         self._play_entrance()
         self._sync_compact_ai_window(allow_create=True)
+        if self._compact_ai_window is not None:
+            if "compact_ai_dialog_mode" in data:
+                self._compact_ai_window.set_dialog_mode(data["compact_ai_dialog_mode"])
+            self._compact_ai_window.refresh_theme()
         self._sync_media_overlay_position()
 
     def _is_position_on_screen(self) -> bool:

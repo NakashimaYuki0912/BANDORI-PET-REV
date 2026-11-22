@@ -14,11 +14,21 @@ def _ensure_socket():
         return
     if _socket is None:
         _socket = QLocalSocket()
+        _socket.connected.connect(_flush_pending)
         _socket.disconnected.connect(_on_disconnected)
         _socket.errorOccurred.connect(_on_error)
     if _socket.state() != _CONNECTED:
         _socket.connectToServer(ipc_server_name())
         # Non-blocking: OS will connect asynchronously
+
+
+def _flush_pending():
+    global _socket, _pending
+    if _socket is not None and _socket.state() == _CONNECTED and _pending:
+        while _pending:
+            data = _pending.pop(0)
+            _socket.write(data)
+        _socket.flush()
 
 
 def _on_disconnected():
@@ -32,12 +42,20 @@ def _on_error(_error):
 def _write(data: bytes):
     _ensure_socket()
     if _socket.state() == _CONNECTED:
+        _flush_pending()
         _socket.write(data)
         _socket.flush()
     else:
-        _pending.append(data)
-        if len(_pending) > 50:
-            _pending[:] = _pending[-25:]
+        if _socket.state() == QLocalSocket.LocalSocketState.ConnectingState:
+            _socket.waitForConnected(100)
+        if _socket.state() == _CONNECTED:
+            _flush_pending()
+            _socket.write(data)
+            _socket.flush()
+        else:
+            _pending.append(data)
+            if len(_pending) > 50:
+                _pending[:] = _pending[-25:]
 
 
 def publish_action(character: str, action: str):
@@ -57,3 +75,14 @@ def publish_lip_sync(character: str, level: float):
         _write(f"LIP\t{character}\t{level:.3f}\n".encode("utf-8"))
     except Exception:
         pass
+
+
+def publish_todo_command(character: str, command: str):
+    if not character or not command:
+        return
+    try:
+        clean = command.replace("\n", " ").replace("\r", " ").strip()
+        _write(f"TODO\t{character}\t{clean}\n".encode("utf-8"))
+    except Exception:
+        pass
+

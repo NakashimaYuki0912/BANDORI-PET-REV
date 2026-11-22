@@ -4204,6 +4204,56 @@ class SettingsWindow(QWidget):
         self._compact_hint_labels.append(ai_event_hint)
         layout.addWidget(ai_event_hint)
 
+        chat_output_row = QHBoxLayout()
+        chat_output_row.setContentsMargins(0, 0, 0, 0)
+        chat_output_label = BodyLabel(_tr("SettingsWindow.compact_ai_show_chat_output", default="在胶囊内显示对话回复"), page)
+        self._compact_ai_show_chat_output = SwitchButton(page)
+        chat_output_row.addWidget(chat_output_label)
+        chat_output_row.addStretch()
+        chat_output_row.addWidget(self._compact_ai_show_chat_output)
+        layout.addLayout(chat_output_row)
+
+        chat_output_hint = BodyLabel(_tr("SettingsWindow.compact_ai_show_chat_output_hint", default="开启后在胶囊窗口上方同步显示AI回复；关闭后仅由角色头顶气泡显示，避免胶囊与气泡重复遮挡。"), page)
+        chat_output_hint.setWordWrap(True)
+        self._compact_hint_labels.append(chat_output_hint)
+        layout.addWidget(chat_output_hint)
+
+        mode_row = QHBoxLayout()
+        mode_row.setContentsMargins(0, 0, 0, 0)
+        mode_label = BodyLabel(_tr("SettingsWindow.compact_ai_dialog_mode", default="对话框工作模式"), page)
+        self._compact_dialog_mode_combo = ComboBox(page)
+        self._compact_dialog_mode_combo.addItem(_tr("SettingsWindow.dialog_mode_short", default="⚡ 短期对话（发完即隐，气泡等待回复）"), userData="short_term")
+        self._compact_dialog_mode_combo.addItem(_tr("SettingsWindow.dialog_mode_long", default="💬 长期对话（常驻展开，多轮记忆上下文）"), userData="long_term")
+        self._compact_dialog_mode_combo.setMinimumWidth(260)
+        mode_row.addWidget(mode_label)
+        mode_row.addStretch()
+        mode_row.addWidget(self._compact_dialog_mode_combo)
+        layout.addLayout(mode_row)
+
+        mode_hint = BodyLabel(_tr("SettingsWindow.compact_ai_dialog_mode_hint", default="区分短期与长期对话。短期模式发送后对话框立即隐去，由桌宠气泡语音等待回复；长期模式保持常驻展开，并严格保留多轮上下文记忆。亦可直接点击胶囊上的模式按钮一键切换。"), page)
+        mode_hint.setWordWrap(True)
+        self._compact_hint_labels.append(mode_hint)
+        layout.addWidget(mode_hint)
+
+        style_row = QHBoxLayout()
+        style_row.setContentsMargins(0, 0, 0, 0)
+        style_label = BodyLabel(_tr("SettingsWindow.compact_ai_capsule_style", default="对话胶囊视觉风格"), page)
+        self._compact_capsule_style_combo = ComboBox(page)
+        self._compact_capsule_style_combo.addItem(_tr("SettingsWindow.capsule_style_frosted", default="现代超透毛玻璃（方案三）"), userData="frosted_acrylic")
+        self._compact_capsule_style_combo.addItem(_tr("SettingsWindow.capsule_style_cyber", default="Cyber-Fluent 霓虹胶囊（方案一）"), userData="cyber_pill")
+        self._compact_capsule_style_combo.addItem(_tr("SettingsWindow.capsule_style_gold", default="Morfonica 典雅黑金（方案二）"), userData="morfonica_gold")
+        self._compact_capsule_style_combo.addItem(_tr("SettingsWindow.capsule_style_custom", default="自定义色彩"), userData="custom")
+        self._compact_capsule_style_combo.setMinimumWidth(220)
+        style_row.addWidget(style_label)
+        style_row.addStretch()
+        style_row.addWidget(self._compact_capsule_style_combo)
+        layout.addLayout(style_row)
+
+        style_hint = BodyLabel(_tr("SettingsWindow.compact_ai_capsule_style_hint", default="选择悬浮对话胶囊的视觉设计风格。方案三「超透毛玻璃」提供极高的暗色文字对比度与通透亚克力质感。"), page)
+        style_hint.setWordWrap(True)
+        self._compact_hint_labels.append(style_hint)
+        layout.addWidget(style_hint)
+
         port_row = QHBoxLayout()
         port_row.setContentsMargins(0, 0, 0, 0)
         self._ai_status_port_enabled = SwitchButton(page)
@@ -4400,6 +4450,9 @@ class SettingsWindow(QWidget):
             hasattr(self, attr)
             for attr in (
                 "_compact_ai_window_enabled",
+                "_compact_ai_show_chat_output",
+                "_compact_dialog_mode_combo",
+                "_compact_capsule_style_combo",
                 "_ai_event_overlay_enabled",
                 "_ai_status_port_enabled",
                 "_ai_status_port_input",
@@ -4436,6 +4489,15 @@ class SettingsWindow(QWidget):
         if not self._cfg or not self._compact_config_widgets_ready():
             return
         self._compact_ai_window_enabled.setChecked(bool(self._cfg.get("compact_ai_window_enabled", False)))
+        self._compact_ai_show_chat_output.setChecked(bool(self._cfg.get("compact_ai_show_chat_output", False)))
+        dialog_mode = self._cfg.get("compact_ai_dialog_mode", "short_term")
+        m_idx = self._compact_dialog_mode_combo.findData(dialog_mode)
+        if m_idx >= 0:
+            self._compact_dialog_mode_combo.setCurrentIndex(m_idx)
+        capsule_style = self._cfg.get("compact_ai_capsule_style", "frosted_acrylic")
+        idx = self._compact_capsule_style_combo.findData(capsule_style)
+        if idx >= 0:
+            self._compact_capsule_style_combo.setCurrentIndex(idx)
         self._ai_event_overlay_enabled.setChecked(bool(self._cfg.get("ai_event_overlay_enabled", False)))
         self._ai_status_port_enabled.setChecked(bool(self._cfg.get("ai_status_port_enabled", False)))
         self._ai_status_port_input.setText(str(self._clamp_ai_status_port(self._cfg.get("ai_status_port", 38472))))
@@ -4468,6 +4530,9 @@ class SettingsWindow(QWidget):
             return {}
         data = {
             "compact_ai_window_enabled": self._cfg.get("compact_ai_window_enabled", False),
+            "compact_ai_show_chat_output": self._cfg.get("compact_ai_show_chat_output", False),
+            "compact_ai_dialog_mode": self._cfg.get("compact_ai_dialog_mode", "short_term"),
+            "compact_ai_capsule_style": self._cfg.get("compact_ai_capsule_style", "frosted_acrylic"),
             "compact_ai_window_opacity": self._cfg.get("compact_ai_window_opacity", 44),
             "compact_ai_window_font_size": self._cfg.get("compact_ai_window_font_size", 12),
             "compact_ai_window_background_color": self._cfg.get("compact_ai_window_background_color", ""),
@@ -4485,6 +4550,9 @@ class SettingsWindow(QWidget):
         if not self._cfg or not self._compact_config_widgets_ready():
             return
         self._cfg.set("compact_ai_window_enabled", self._compact_ai_window_enabled.isChecked())
+        self._cfg.set("compact_ai_show_chat_output", self._compact_ai_show_chat_output.isChecked())
+        self._cfg.set("compact_ai_dialog_mode", self._compact_dialog_mode_combo.currentData() or "short_term")
+        self._cfg.set("compact_ai_capsule_style", self._compact_capsule_style_combo.currentData() or "frosted_acrylic")
         self._cfg.set("compact_ai_window_opacity", self._compact_window_opacity_slider.value())
         self._cfg.set("compact_ai_window_font_size", self._compact_window_font_size_slider.value())
         self._cfg.set("compact_ai_window_background_color", self._selected_compact_color(self._compact_bg_color_btns, BANDORI_PRIMARY))
@@ -4512,6 +4580,9 @@ class SettingsWindow(QWidget):
         if not self._cfg or not self._compact_config_widgets_ready():
             return
         avatar_color = self._cfg.get("user_avatar_color", BANDORI_PRIMARY)
+        self._compact_ai_show_chat_output.setChecked(False)
+        self._compact_dialog_mode_combo.setCurrentIndex(0)
+        self._compact_capsule_style_combo.setCurrentIndex(0)
         self._compact_window_opacity_slider.setValue(44)
         self._compact_window_opacity_value.setText(_tr("SettingsWindow.opacity_value", v=44))
         self._set_compact_color_selection(self._compact_bg_color_btns, avatar_color)
@@ -7496,6 +7567,8 @@ class SettingsWindow(QWidget):
             "live2d_quality": self._live2d_quality,
             "live2d_scale": self._live2d_scale,
             "compact_ai_window_enabled": self._cfg.get("compact_ai_window_enabled", False) if self._cfg else False,
+            "compact_ai_show_chat_output": self._cfg.get("compact_ai_show_chat_output", False) if self._cfg else False,
+            "compact_ai_dialog_mode": self._cfg.get("compact_ai_dialog_mode", "short_term") if self._cfg else "short_term",
             "compact_ai_window_opacity": self._cfg.get("compact_ai_window_opacity", 44) if self._cfg else 44,
             "compact_ai_window_font_size": self._cfg.get("compact_ai_window_font_size", 12) if self._cfg else 12,
             "compact_ai_window_background_color": self._cfg.get("compact_ai_window_background_color", "") if self._cfg else "",

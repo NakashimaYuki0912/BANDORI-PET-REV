@@ -436,7 +436,7 @@ def main():
             handle_ipc_line(raw_line.rstrip("\r\n"))
 
     def handle_ipc_line(line: str):
-        if line.startswith(("ACTION\t", "LIP\t", "AI_EVENT\t", "CHAT_EVENT\t", "SCALE_PREVIEW\t")):
+        if line.startswith(("ACTION\t", "LIP\t", "AI_EVENT\t", "CHAT_EVENT\t", "SCALE_PREVIEW\t", "TODO\t")):
             broadcast_ipc_line(line)
         elif line.startswith("MODEL\t") or line.startswith("SETTINGS\t") or line == "LAUNCH":
             handle_settings_line(line)
@@ -667,6 +667,8 @@ def main():
         cfg.set("chat_integration_include_context", pet_window_ref["chat_integration_include_context"])
         cfg.set("chat_integration_port", pet_window_ref["chat_integration_port"])
         cfg.set("chat_integration_token", pet_window_ref["chat_integration_token"])
+        if "compact_ai_dialog_mode" in data:
+            cfg.set("compact_ai_dialog_mode", data["compact_ai_dialog_mode"])
         if "user_avatar_color" in data:
             cfg.set("user_avatar_color", data["user_avatar_color"])
         if "user_avatar_path" in data:

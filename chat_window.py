@@ -3872,6 +3872,47 @@ class ChatWindow(QWidget):
                 return True
         return False
 
+    def _handle_todo_command(self, text: str) -> bool:
+        try:
+            from todo_manager import parse_todo_intent
+            from action_bus import publish_todo_command
+            intent = parse_todo_intent(text, self._character)
+            if intent is None:
+                return False
+
+            publish_todo_command(self._character, text)
+
+            self._input.clear()
+            self._pending_attachments = []
+            self._update_attachment_hint()
+
+            user_bubble = MessageBubble(
+                text,
+                "user",
+                self._user_name or _tr("ChatWindow.you"),
+                avatar_color=self._user_avatar_color,
+                avatar_path=self._user_avatar_path,
+                show_reasoning=self._show_reasoning,
+            )
+            self._msg_layout.insertWidget(self._msg_layout.count() - 1, user_bubble)
+
+            reply_text = intent["message"]
+            actions = intent.get("actions", [])
+            for act in actions:
+                self.emit_action_for_ipc(self._character, act)
+
+            self._show_local_assistant_message(reply_text)
+
+            if self._db is not None:
+                try:
+                    self._db.add_message(self._character, "user", text)
+                    self._db.add_message(self._character, "assistant", reply_text)
+                except Exception:
+                    pass
+            return True
+        except Exception:
+            return False
+
     def _apply_relationship_update(self, character: str, user_text: str, assistant_text: str, actions: list[str]):
         if not user_text.strip() or not character:
             return
@@ -4283,6 +4324,9 @@ class ChatWindow(QWidget):
         if not attachments and self._handle_local_memory_command(text):
             return
 
+        if not attachments and self._handle_todo_command(text):
+            return
+
         self._reload_runtime_config()
         api_url = self._cfg.get("llm_api_url", "")
         api_key = self._cfg.get("llm_api_key", "")
@@ -4579,14 +4623,14 @@ class ChatWindow(QWidget):
         tool_config = self._tool_config_snapshot()
         web_search = bool(self._cfg.get("llm_web_search_enabled", False))
         show_search_sources = bool(self._cfg.get("llm_web_search_show_sources", True))
-        if self._use_responses_api(api_url) and not web_search:
+        if self._use_responses_api(api_url):
             self._worker = ResponsesStreamWorker(
                 api_url,
                 api_key,
                 model_id,
                 messages,
                 enable_thinking,
-                False,
+                web_search,
                 show_search_sources=show_search_sources,
                 tool_config=tool_config,
             )
@@ -4673,6 +4717,16 @@ class ChatWindow(QWidget):
         clean, inline_sources = extract_inline_search_sources(full_text)
         self._merge_search_sources(inline_sources)
         clean = strip_action_tags(clean)
+        try:
+            from todo_manager import parse_todo_tag, strip_todo_tags
+            todo_info = parse_todo_tag(full_text)
+            if todo_info:
+                t_mode, t_mins, t_task = todo_info
+                clean = strip_todo_tags(clean)
+                from action_bus import publish_todo_command
+                publish_todo_command(self._active_response_character, f"[TODO_{t_mode.upper()}:{t_mins}:{t_task}]")
+        except Exception:
+            pass
         clean = self._sanitize_group_assistant_reply(self._active_response_character, clean)
         reasoning_clean = strip_action_tags(reasoning_text)
         self._flush_tts_text(self._active_response_character)
@@ -4728,6 +4782,16 @@ class ChatWindow(QWidget):
         clean, inline_sources = extract_inline_search_sources(full_text)
         self._merge_search_sources(inline_sources)
         clean = strip_action_tags(clean)
+        try:
+            from todo_manager import parse_todo_tag, strip_todo_tags
+            todo_info = parse_todo_tag(full_text)
+            if todo_info:
+                t_mode, t_mins, t_task = todo_info
+                clean = strip_todo_tags(clean)
+                from action_bus import publish_todo_command
+                publish_todo_command(self._active_response_character, f"[TODO_{t_mode.upper()}:{t_mins}:{t_task}]")
+        except Exception:
+            pass
         clean = self._sanitize_group_assistant_reply(self._active_response_character, clean)
         reasoning_clean = strip_action_tags(reasoning_text)
         if self._current_bubble:

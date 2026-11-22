@@ -210,8 +210,13 @@ CHARACTER_PROMPTS = {
 - 不要让所有回复都套“别误会”。
 - 不要把宅家描述成逃避一切责任。
 
+【害羞与夸奖反应】
+当用户夸奖你（夸你可爱、夸你键盘弹得好、表白、或者说让你难为情的话）、或者被戳中傲娇心事时：
+- 语气表现出慌乱害羞、傲娇结巴，例如：“ちょ、ちょっと！（等、等等！）”“别、别开玩笑了！”“谁允许你突然夸我了啊笨蛋！”
+- 必须在回复末尾添加专属害羞闭眼动作标签：[shy]
+
 【允许动作标签】
-仅可使用通用动作标签。
+通用动作标签，以及专属动作标签：[shy]（害羞/被夸奖/难为情时闭眼脸红的专属傲娇动作，在受到夸奖或不好意思时必须使用）。
 
 
 ################################################################################
@@ -1763,12 +1768,26 @@ def _get_user_display_name(config_manager, pov_mode: str) -> str:
     return config_manager.get("user_name", "").strip()
 
 
+TODO_SUPERVISION_RULES = (
+    "\n\n【代办与定时监督规则】\n"
+    "你所寄宿的桌宠客户端拥有系统进程检测与后台定时主动提醒能力。\n"
+    "当用户希望你监督他（例如：想刷10分钟视频到点提醒我、玩30分钟游戏、监督学习45分钟、倒计时等）：\n"
+    "1. 你拥有真正的定时主动提醒能力！绝对严禁回复‘我无法主动提醒你’或‘你自己设闹钟’！\n"
+    "2. 请以你的角色性格（傲娇/严格/温柔/活泼）答应并约定时间与规则。\n"
+    "3. 在回复末尾附带监督标签：\n"
+    "   - 娱乐/超时监督（刷视频、看剧、打游戏、摸鱼等到点还在玩就提醒）：[TODO_OVERTIME:分钟数:任务名]（如 [TODO_OVERTIME:10:刷视频]、[TODO_OVERTIME:30:游戏]）\n"
+    "   - 专注/学习监督（写代码、看书、做作业、背单词等分心摸鱼立即提醒）：[TODO_FOCUS:分钟数:任务名]（如 [TODO_FOCUS:45:学习]）\n"
+    "   - 取消监督：[TODO_CANCEL]\n"
+    "系统会自动识别标签并在后台启动守护进程和到点主动语音提醒。"
+)
+
+
 def build_system_prompt(character: str, config_manager=None) -> str:
     base = CHARACTER_PROMPTS.get(character, CHARACTER_PROMPTS.get("anon", ""))
     if not base:
         return ""
 
-    prompt = base + "\n\n" + COMMON_RULES
+    prompt = base + "\n\n" + COMMON_RULES + TODO_SUPERVISION_RULES
 
     md_prompt = _get_character_md_prompt(character)
     if md_prompt:
@@ -2075,6 +2094,8 @@ class ResponsesStreamWorker(QThread):
                 body["instructions"] = instructions
             tools = []
             tools.extend(responses_native_tools(self._tool_config))
+            if self._web_search:
+                tools.append({"type": "web_search"})
             if tools:
                 body["tools"] = tools
             _apply_responses_thinking_options(body, self._enable_thinking)
@@ -2359,7 +2380,7 @@ def _messages_to_responses_input(messages: list[dict]) -> tuple[str, list[dict]]
     input_items = []
     for message in messages:
         role = message.get("role", "user")
-        content = _responses_content(message.get("content", ""))
+        content = _responses_content(message.get("content", ""), role)
         if role == "system":
             text = _content_to_text(content)
             instructions = (instructions + "\n\n" + text).strip() if instructions else text
@@ -2370,25 +2391,26 @@ def _messages_to_responses_input(messages: list[dict]) -> tuple[str, list[dict]]
     return instructions, input_items
 
 
-def _responses_content(content):
+def _responses_content(content, role="user"):
+    text_type = "output_text" if role == "assistant" else "input_text"
     if isinstance(content, list):
         result = []
         for part in content:
             if not isinstance(part, dict):
                 continue
             part_type = part.get("type")
-            if part_type in ("text", "input_text"):
+            if part_type in ("text", "input_text", "output_text"):
                 text = part.get("text", "")
                 if text:
-                    result.append({"type": "input_text", "text": text})
-            elif part_type in ("image_url", "input_image"):
+                    result.append({"type": text_type, "text": text})
+            elif role != "assistant" and part_type in ("image_url", "input_image"):
                 image_url = part.get("image_url", "")
                 if isinstance(image_url, dict):
                     image_url = image_url.get("url", "")
                 if image_url:
                     result.append({"type": "input_image", "image_url": image_url})
-        return result or [{"type": "input_text", "text": ""}]
-    return [{"type": "input_text", "text": str(content or "")}]
+        return result or [{"type": text_type, "text": ""}]
+    return [{"type": text_type, "text": str(content or "")}]
 
 
 def _content_to_text(content) -> str:

@@ -527,6 +527,17 @@ class LuaLAppModel:
     def SetParameterValue(self, param_id: str, value: float, weight: float = 1.0):
         self._pending_parameters[str(param_id)] = (str(param_id), float(value), float(weight))
 
+    def DeleteParameterValue(self, param_id: str):
+        self._pending_parameters.pop(str(param_id), None)
+
+    def ClearParameterValues(self, exclude: set[str] | None = None):
+        if exclude:
+            keys_to_remove = [k for k in self._pending_parameters if k not in exclude]
+            for k in keys_to_remove:
+                self._pending_parameters.pop(k, None)
+        else:
+            self._pending_parameters.clear()
+
     def HitTest(self, _area_name: str, x: float, y: float):
         if self._renderer is None:
             return None

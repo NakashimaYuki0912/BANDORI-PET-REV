@@ -14,13 +14,13 @@ from ambient_chat_manager import (
     build_ambient_prompt,
     AmbientChatManager,
 )
-from PySide6.QtCore import QCoreApplication
+from PySide6.QtWidgets import QApplication
 
 class TestAmbientChatManager(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        if not QCoreApplication.instance():
-            cls.app = QCoreApplication([])
+        if not QApplication.instance():
+            cls.app = QApplication([])
 
     def test_parse_dialogue_motion(self):
         text1 = "……还没休息吗？现在已经很晚了，继续盯着屏幕会增加疲劳。[natural01]"
@@ -45,12 +45,37 @@ class TestAmbientChatManager(unittest.TestCase):
         self.assertTrue(len(samples) > 0)
         self.assertTrue(any("效率" in s or "感情" in s for s in samples))
 
+    def test_load_character_few_shots_kasumi(self):
+        samples = load_character_few_shots("kasumi")
+        self.assertTrue(len(samples) > 0)
+        self.assertTrue(any("闪闪发光" in s or "心动" in s or "香澄" in s for s in samples))
+
+    def test_load_character_few_shots_chinese_name(self):
+        samples = load_character_few_shots("千早爱音")
+        self.assertTrue(len(samples) > 0)
+
     def test_build_ambient_prompt(self):
         ctx = {"time_str": "02:00", "time_phase": "深夜", "music": "None", "weather": "晴", "user_name": "TestUser"}
         prompt = build_ambient_prompt("rui", ctx)
         self.assertIn("八潮瑠唯", prompt)
         self.assertIn("02:00", prompt)
         self.assertIn("TestUser", prompt)
+        self.assertIn("说话方式", prompt)
+        self.assertIn("绝对禁止", prompt)
+
+    def test_character_banter_topic_generation(self):
+        from ambient_chat_manager import build_ambient_prompt_bundle, get_character_band_info
+        band_name, mates, cross_rels = get_character_band_info("mashiro")
+        self.assertEqual(band_name, "Morfonica")
+        self.assertTrue(len(mates) > 0)
+        self.assertTrue(any("二叶筑紫" in m or "桐谷透子" in m for m in mates))
+
+        ctx = {"time_str": "20:30", "time_phase": "夜晚", "music": "None", "weather": "凉爽", "user_name": "Lawrance"}
+        prompt, user_cue = build_ambient_prompt_bundle("mashiro", ctx, topic_mode="character_banter")
+        self.assertIn("仓田真白", prompt)
+        self.assertIn("吐槽", prompt)
+        self.assertIn("绝对严禁", prompt)
+        self.assertTrue("透子" in prompt or "筑紫" in prompt or "七深" in prompt or "瑠唯" in prompt)
 
     def test_entry_prefetched_signal_and_pool(self):
         manager = AmbientChatManager(None)

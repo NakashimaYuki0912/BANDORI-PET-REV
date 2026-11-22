@@ -47,6 +47,7 @@ class Live2DWidget(QOpenGLWidget):
         self._click_callback = None
         self._right_click_callback = None
         self._double_click_callback = None
+        self._middle_click_callback = None
         self._drag_locked = False
         self._initialized_gl = False
         
@@ -212,6 +213,9 @@ class Live2DWidget(QOpenGLWidget):
 
     def set_right_click_callback(self, cb):
         self._right_click_callback = cb
+
+    def set_middle_click_callback(self, cb):
+        self._middle_click_callback = cb
 
     def set_double_click_callback(self, cb):
         self._double_click_callback = cb
@@ -488,6 +492,11 @@ class Live2DWidget(QOpenGLWidget):
             if self._is_model_hit_at(x, y) and self._right_click_callback:
                 gpos = event.globalPosition()
                 self._right_click_callback(int(gpos.x()), int(gpos.y()))
+            return
+
+        if event.button() == Qt.MouseButton.MiddleButton:
+            if self._is_model_hit_at(x, y) and self._middle_click_callback:
+                self._middle_click_callback()
             return
 
         should_click = False

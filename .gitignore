@@ -16,3 +16,8 @@ data.*
 *.zip
 *.7z
 *.rar
+*.msi
+*.log
+taskbar_trace*
+.taskbar_trace
+.backup_*

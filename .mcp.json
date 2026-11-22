@@ -1,0 +1,48 @@
+{
+  "mcpServers": {
+    "local-vision": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "mcp-local-vision"
+      ],
+      "env": {
+        "OLLAMA_URL": "http://127.0.0.1:11434/v1",
+        "OLLAMA_MODEL": "qwen3-vl:2b"
+      }
+    },
+    "sqlite": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "mcp-server-sqlite",
+        "--db-path",
+        "D:/VS_program/BANDORI-PET-REV/data.db"
+      ]
+    },
+    "git": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "mcp-server-git",
+        "--repository",
+        "D:/VS_program/BANDORI-PET-REV"
+      ]
+    },
+    "fetch": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "mcp-server-fetch"
+      ]
+    },
+    "sequential-thinking": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@anthropic/mcp-server-sequential-thinking"
+      ]
+    }
+  }
+}

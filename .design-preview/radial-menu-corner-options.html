@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>桌宠右键菜单 · 屏幕边缘/角落处理方案</title>
+<style>
+  :root {
+    --bg: #14161c;
+    --panel: #1d2028;
+    --panel2: #232733;
+    --border: #313647;
+    --text: #e8eaf0;
+    --muted: #9aa1b5;
+    --accent: #ff5c8a;
+    --accent2: #7c6cff;
+    --green: #4ade80;
+    --row-h: 26px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    background: var(--bg); color: var(--text); padding: 28px 32px 60px;
+  }
+  h1 { font-size: 22px; margin-bottom: 6px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 26px; }
+  .hint {
+    background: #232733; border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 16px; font-size: 13px; color: var(--muted); margin-bottom: 30px;
+    line-height: 1.7;
+  }
+  .hint b { color: var(--accent); }
+
+  .option {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+    padding: 20px 22px 24px; margin-bottom: 34px;
+  }
+  .opt-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 6px; }
+  .opt-badge {
+    font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 20px;
+    background: var(--accent); color: #fff; letter-spacing: .5px;
+  }
+  .opt-badge.b2 { background: var(--accent2); }
+  .opt-badge.b3 { background: var(--green); color: #0b1f12; }
+  .opt-title { font-size: 17px; font-weight: 700; }
+  .opt-desc { color: var(--muted); font-size: 13px; line-height: 1.65; margin-bottom: 16px; }
+  .opt-desc b { color: var(--text); }
+
+  .scenarios { display: flex; gap: 16px; flex-wrap: wrap; }
+  .scenario { flex: 1 1 240px; min-width: 240px; }
+  .sc-label { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+
+  /* 模拟屏幕 */
+  .screen {
+    position: relative; width: 100%; aspect-ratio: 16/9; min-height: 150px;
+    background: linear-gradient(160deg, #20242f, #171a22);
+    border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+  }
+  .screen::before { /* 任务栏 */
+    content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 16px;
+    background: #101218; border-top: 1px solid var(--border);
+  }
+  .taskbar { position: absolute; left: 0; right: 0; bottom: 0; height: 16px; background: #101218; z-index: 5; }
+  .taskbar::before { content: ""; position: absolute; left: 50%; top: 5px; width: 60px; height: 3px; transform: translateX(-50%); background: #3a4052; border-radius: 2px; }
+
+  /* 宠物：简化的小人 */
+  .pet {
+    position: absolute; width: 46px; height: 58px; z-index: 2;
+    background: linear-gradient(180deg, #ff8fb3, #ff5c8a);
+    border-radius: 40% 40% 30% 30% / 45% 45% 30% 30%;
+    box-shadow: 0 4px 14px rgba(0,0,0,.4);
+  }
+  .pet::before, .pet::after { /* 眼睛 */
+    content: ""; position: absolute; top: 20px; width: 5px; height: 7px;
+    background: #2b1330; border-radius: 50%;
+  }
+  .pet::before { left: 13px; } .pet::after { right: 13px; }
+
+  /* 菜单：列表 + 媒体卡片 */
+  .menu {
+    position: absolute; z-index: 6; display: flex; gap: 10px; align-items: center;
+  }
+  .menu .mlist {
+    width: 150px; background: #2a2f3d; border: 1px solid #3c4254; border-radius: 8px;
+    padding: 5px; box-shadow: 0 6px 20px rgba(0,0,0,.45);
+  }
+  .menu .mrow {
+    font-size: 11px; color: #dbe0ea; line-height: 22px; padding: 0 8px;
+    border-radius: 5px;
+  }
+  .menu .mrow:first-child { background: #3a4a63; color: #fff; font-weight: 600; }
+  .menu .mcard {
+    width: 120px; background: #2a2f3d; border: 1px solid #3c4254; border-radius: 8px;
+    padding: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.45); text-align: center;
+  }
+  .menu .mcard .title { font-size: 10px; color: #c9cede; font-weight: 600; }
+  .menu .mcard .nm { font-size: 9px; color: #7e879c; margin-top: 3px; }
+  .menu.vert { flex-direction: column; align-items: flex-start; }
+
+  /* 圆环菜单 */
+  .radial {
+    position: absolute; z-index: 6; width: 132px; height: 132px;
+  }
+  .radial .ring {
+    position: absolute; inset: 0; border-radius: 50%;
+    border: 1px dashed rgba(255,255,255,.25);
+  }
+  .radial .center { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); width: 8px; height: 8px; background: var(--accent); border-radius: 50%; }
+  .radial .dot {
+    position: absolute; width: 22px; height: 22px; border-radius: 50%;
+    background: #2a2f3d; border: 1px solid #3c4254; display: flex; align-items: center;
+    justify-content: center; font-size: 11px;
+  }
+  .radial .dot:nth-child(2) { top: -8px; left: 55px; }        /* 上 */
+  .radial .dot:nth-child(3) { top: 30px; left: 105px; }       /* 右上 */
+  .radial .dot:nth-child(4) { top: 78px; left: 105px; }       /* 右下 */
+  .radial .dot:nth-child(5) { top: 118px; left: 55px; }       /* 下 */
+  .radial .dot:nth-child(6) { top: 78px; left: 5px; }         /* 左下 */
+  .radial .dot:nth-child(7) { top: 30px; left: 5px; }         /* 左上 */
+
+  .pick { margin-top: 4px; text-align: right; font-size: 13px; color: var(--muted); }
+  .pick b { color: var(--green); }
+</style>
+</head>
+<body>
+  <h1>桌宠右键菜单 · 屏幕边缘/角落处理方案</h1>
+  <div class="sub">当宠物被拖到屏幕左/右边缘或角落时，右键菜单怎么排、才不盖住宠物。</div>
+
+  <div class="hint">
+    每个方案展示 3 个场景：<b>贴左缘</b>、<b>贴右缘</b>、<b>左下角</b>。
+    灰色圆点是宠物（简化为粉小人），右侧卡片是"列表"，最右是"媒体卡片"。
+    请对比后告诉我选 <b>方案A / B / C</b>（也可提出你的修改意见）。
+  </div>
+
+  <!-- ============ 方案 A：横向滑入 ============ -->
+  <div class="option">
+    <div class="opt-head">
+      <span class="opt-badge">方案 A</span>
+      <span class="opt-title">横向滑入式</span>
+    </div>
+    <div class="opt-desc">
+      保持现在的<b>横排</b>（列表 + 媒体卡片），宠物贴哪边，菜单就往<b>屏幕内侧</b>滑，
+      宠物始终在窗口近边、完全不被盖住。改动最小，视觉上与现在一致。
+    </div>
+    <div class="scenarios">
+      <div class="scenario">
+        <div class="sc-label">贴左缘</div>
+        <div class="screen">
+          <div class="pet" style="left:8px; top:52px;"></div>
+          <div class="taskbar"></div>
+          <div class="menu" style="left:60px; top:30px;">
+            <div class="mlist">
+              <div class="mrow">聊天</div><div class="mrow">打开角色对话</div>
+              <div class="mrow">更换角色</div><div class="mrow">天气</div>
+              <div class="mrow">查询今天天气</div><div class="mrow">锁定位置</div>
+            </div>
+            <div class="mcard"><div class="title">No media</div><div class="nm">No active playback</div></div>
+          </div>
+        </div>
+      </div>
+      <div class="scenario">
+        <div class="sc-label">贴右缘</div>
+        <div class="screen">
+          <div class="pet" style="right:8px; top:52px;"></div>
+          <div class="taskbar"></div>
+          <div class="menu" style="right:60px; top:30px; flex-direction:row-reverse;">
+            <div class="mlist">
+              <div class="mrow">聊天</div><div class="mrow">打开角色对话</div>
+              <div class="mrow">更换角色</div><div class="mrow">天气</div>
+              <div class="mrow">查询今天天气</div><div class="mrow">锁定位置</div>
+            </div>
+            <div class="mcard"><div class="title">No media</div><div class="nm">No active playback</div></div>
+          </div>
+        </div>
+      </div>
+      <div class="scenario">
+        <div class="sc-label">左下角</div>
+        <div class="screen">
+          <div class="pet" style="left:8px; bottom:26px;"></div>
+          <div class="taskbar"></div>
+          <div class="menu" style="left:60px; bottom:36px; top:auto;">
+            <div class="mlist">
+              <div class="mrow">聊天</div><div class="mrow">打开角色对话</div>
+              <div class="mrow">更换角色</div><div class="mrow">天气</div>
+              <div class="mrow">查询今天天气</div><div class="mrow">锁定位置</div>
+            </div>
+            <div class="mcard"><div class="title">No media</div><div class="nm">No active playback</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 方案 B：纵向堆叠 ============ -->
+  <div class="option">
+    <div class="opt-head">
+      <span class="opt-badge b2">方案 B</span>
+      <span class="opt-title">纵向堆叠式</span>
+    </div>
+    <div class="opt-desc">
+      贴边缘时菜单改为<b>上下堆叠</b>（列表在上、媒体卡片在下），贴着宠物一侧纵向排，
+      横向占用更窄，在角落/窄屏也不容易顶到另一边。屏幕中间仍用横排。
+    </div>
+    <div class="scenarios">
+      <div class="scenario">
+        <div class="sc-label">贴左缘</div>
+        <div class="screen">
+          <div class="pet" style="left:8px; top:52px;"></div>
+          <div class="taskbar"></div>
+          <div class="menu vert" style="left:60px; top:20px;">
+            <div class="mlist">
+              <div class="mrow">聊天</div><div class="mrow">打开角色对话</div>
+              <div class="mrow">更换角色</div><div class="mrow">天气</div>
+              <div class="mrow">查询今天天气</div><div class="mrow">锁定位置</div>
+            </div>
+            <div class="mcard"><div class="title">No media</div><div class="nm">No active playback</div></div>
+          </div>
+        </div>
+      </div>
+      <div class="scenario">
+        <div class="sc-label">贴右缘</div>
+        <div class="screen">
+          <div class="pet" style="right:8px; top:52px;"></div>
+          <div class="taskbar"></div>
+          <div class="menu vert" style="right:60px; top:20px; align-items:flex-end;">
+            <div class="mlist">
+              <div class="mrow">聊天</div><div class="mrow">打开角色对话</div>
+              <div class="mrow">更换角色</div><div class="mrow">天气</div>
+              <div class="mrow">查询今天天气</div><div class="mrow">锁定位置</div>
+            </div>
+            <div class="mcard"><div class="title">No media</div><div class="nm">No active playback</div></div>
+          </div>
+        </div>
+      </div>
+      <div class="scenario">
+        <div class="sc-label">左下角</div>
+        <div class="screen">
+          <div class="pet" style="left:8px; bottom:26px;"></div>
+          <div class="taskbar"></div>
+          <div class="menu vert" style="left:60px; bottom:26px; top:auto;">
+            <div class="mlist">
+              <div class="mrow">聊天</div><div class="mrow">打开角色对话</div>
+              <div class="mrow">更换角色</div><div class="mrow">天气</div>
+              <div class="mrow">查询今天天气</div><div class="mrow">锁定位置</div>
+            </div>
+            <div class="mcard"><div class="title">No media</div><div class="nm">No active playback</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 方案 C：紧凑圆环 ============ -->
+  <div class="option">
+    <div class="opt-head">
+      <span class="opt-badge b3">方案 C</span>
+      <span class="opt-title">紧凑圆环模式</span>
+    </div>
+    <div class="opt-desc">
+      贴边缘/角落时切换到<b>小圆环菜单</b>：一圈图标围绕宠物，直径很小、
+      怎么贴边都不会盖住宠物、也不会出屏。视觉差异最大，交互变"一圈点选"。
+    </div>
+    <div class="scenarios">
+      <div class="scenario">
+        <div class="sc-label">贴左缘</div>
+        <div class="screen">
+          <div class="pet" style="left:14px; top:56px;"></div>
+          <div class="taskbar"></div>
+          <div class="radial" style="left:40px; top:16px;">
+            <div class="ring"></div><div class="center"></div>
+            <div class="dot">聊</div><div class="dot">换</div><div class="dot">天</div>
+            <div class="dot">锁</div><div class="dot">音</div><div class="dot">设</div>
+          </div>
+        </div>
+      </div>
+      <div class="scenario">
+        <div class="sc-label">贴右缘</div>
+        <div class="screen">
+          <div class="pet" style="right:14px; top:56px;"></div>
+          <div class="taskbar"></div>
+          <div class="radial" style="right:40px; top:16px;">
+            <div class="ring"></div><div class="center"></div>
+            <div class="dot">聊</div><div class="dot">换</div><div class="dot">天</div>
+            <div class="dot">锁</div><div class="dot">音</div><div class="dot">设</div>
+          </div>
+        </div>
+      </div>
+      <div class="scenario">
+        <div class="sc-label">左下角</div>
+        <div class="screen">
+          <div class="pet" style="left:14px; bottom:30px;"></div>
+          <div class="taskbar"></div>
+          <div class="radial" style="left:38px; bottom:24px; top:auto;">
+            <div class="ring"></div><div class="center"></div>
+            <div class="dot">聊</div><div class="dot">换</div><div class="dot">天</div>
+            <div class="dot">锁</div><div class="dot">音</div><div class="dot">设</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="pick">← 看完后回复<b>「选方案 A / B / C」</b>，我再落地实现。</div>
+</body>
+</html>

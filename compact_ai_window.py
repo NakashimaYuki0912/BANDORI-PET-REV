@@ -11,11 +11,12 @@ _INLINE_SOURCES_TAIL_RE = re.compile(
 )
 
 from PySide6.QtCore import QEvent, QEasingCurve, QObject, QPoint, QPropertyAnimation, Qt, QThread, QTimer, Signal, QRect, QRectF
-from PySide6.QtGui import QColor, QKeyEvent, QPainter, QPainterPath, QPen, QBrush, QTextCursor
+from PySide6.QtGui import QColor, QKeyEvent, QPainter, QPainterPath, QPen, QBrush, QTextCursor, QLinearGradient, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
     QFrame,
+    QLabel,
     QPushButton,
     QTextEdit,
     QVBoxLayout,
@@ -107,7 +108,7 @@ def _rgba(color: QColor) -> str:
 
 def _contrast_text(color: QColor) -> str:
     luminance = (color.red() * 299 + color.green() * 587 + color.blue() * 114) / 1000
-    return "#24121a" if luminance > 170 else "#ffffff"
+    return "#111827" if luminance > 165 else "#ffffff"
 
 
 def _opacity_alpha(value) -> int:
@@ -122,12 +123,13 @@ def _font_size_from_config(value) -> int:
     try:
         size = int(round(float(value)))
     except (TypeError, ValueError):
-        size = 12
-    return max(9, min(22, size))
+        size = 13
+    return max(11, min(22, size))
 
 
 class CompactPromptEdit(QTextEdit):
     send_requested = Signal()
+    escape_requested = Signal()
 
     def keyPressEvent(self, event: QKeyEvent):
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
@@ -135,6 +137,12 @@ class CompactPromptEdit(QTextEdit):
                 super().keyPressEvent(event)
             else:
                 self.send_requested.emit()
+            return
+        if event.key() == Qt.Key.Key_Escape:
+            self.escape_requested.emit()
+            window = self.window()
+            if window is not None:
+                window.hide()
             return
         super().keyPressEvent(event)
 
@@ -192,6 +200,7 @@ class CompactSendButton(QPushButton):
 
 class CompactAIWindow(QWidget):
     action_triggered = Signal(str)
+    assistant_reply_finished = Signal(str, list)  # clean text, action tags
 
     def __init__(self, character: str, model_manager, config_manager, parent=None):
         super().__init__(parent)
@@ -229,6 +238,9 @@ class CompactAIWindow(QWidget):
         self._clear_timer = QTimer(self)
         self._clear_timer.setSingleShot(True)
         self._clear_timer.timeout.connect(self._clear_external_output)
+        self._dialog_mode = str(self._cfg.get("compact_ai_dialog_mode", "short_term") or "short_term").strip().lower() if self._cfg else "short_term"
+        if self._dialog_mode not in ("short_term", "long_term"):
+            self._dialog_mode = "short_term"
         self._pet_geo = QRect()
         self._manual_offset = None
         self._dragging = False
@@ -239,11 +251,57 @@ class CompactAIWindow(QWidget):
         self._panel_color = QColor(255, 255, 255, 210)
         self._panel_border_color = QColor(255, 255, 255, 160)
         self._shadow_color = QColor(0, 0, 0, 42)
+        self._todo_manager = None
 
         self._init_ui()
         self.refresh_theme()
         self._load_last_conversation()
         self._update_output_height(animated=False)
+
+    def set_todo_manager(self, manager):
+        self._todo_manager = manager
+
+    def toggle_dialog_mode(self):
+        next_mode = "long_term" if self._dialog_mode == "short_term" else "short_term"
+        self.set_dialog_mode(next_mode)
+
+    def set_dialog_mode(self, mode: str):
+        mode = str(mode or "short_term").strip().lower()
+        if mode not in ("short_term", "long_term"):
+            mode = "short_term"
+        self._dialog_mode = mode
+        if self._cfg:
+            self._cfg.set("compact_ai_dialog_mode", mode)
+            try:
+                self._cfg.save()
+            except Exception:
+                pass
+        if mode == "long_term":
+            self.ensure_context_loaded()
+        self._sync_mode_ui()
+        self.refresh_theme()
+        self._update_output_height(animated=True)
+
+    def ensure_context_loaded(self):
+        if not self._history:
+            self._load_last_conversation()
+        if self._dialog_mode == "long_term" and not self._output.toPlainText().strip():
+            for msg in reversed(self._history):
+                if msg.get("content"):
+                    self._set_output_text(msg["content"])
+                    break
+
+    def _sync_mode_ui(self):
+        if not hasattr(self, "_mode_button"):
+            return
+        is_short = (self._dialog_mode == "short_term")
+        btn_text = _tr("CompactAIWindow.mode_short_btn", default="⚡ 短期") if is_short else _tr("CompactAIWindow.mode_long_btn", default="💬 长期")
+        tip_text = _tr("CompactAIWindow.mode_short_tip", default="当前为【短期对话】：发完这句话窗口立即消失，气泡等待回复。\n点击切换为【💬 长期对话】（保持常驻并记忆之前聊的内容）") if is_short else _tr("CompactAIWindow.mode_long_tip", default="当前为【长期对话】：窗口保持常驻展开，多轮对话并记忆上下文。\n点击切换为【⚡ 短期对话】（发完即隐）")
+        self._mode_button.setText(btn_text)
+        self._mode_button.setToolTip(tip_text)
+        if hasattr(self, "_input") and not self._worker:
+            ph = _tr("CompactAIWindow.input_placeholder_short", default="发一句话，发完即隐，气泡等待回复...") if is_short else _tr("CompactAIWindow.input_placeholder_long", default="连续对话中，角色将记忆上下文...")
+            self._input.setPlaceholderText(ph)
 
     def _init_ui(self):
         self.setWindowFlags(
@@ -255,12 +313,12 @@ class CompactAIWindow(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
         self.setAutoFillBackground(False)
-        self.setMinimumSize(260, 96)
-        self.resize(320, 108)
+        self.setMinimumSize(240, 44)
+        self.resize(320, 56)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(7)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(6)
 
         self._output = QTextEdit(self)
         self._output.setObjectName("compactOutput")
@@ -275,9 +333,21 @@ class CompactAIWindow(QWidget):
         self._input_shell = QFrame(self)
         self._input_shell.setObjectName("compactComposer")
         row = QHBoxLayout(self._input_shell)
-        row.setContentsMargins(9, 4, 4, 4)
-        row.setSpacing(6)
+        row.setContentsMargins(6, 2, 4, 2)
+        row.setSpacing(8)
         layout.addWidget(self._input_shell)
+
+        self._badge_label = QLabel(self._input_shell)
+        self._badge_label.setObjectName("compactCharBadge")
+        self._badge_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        row.addWidget(self._badge_label, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self._mode_button = QPushButton(self._input_shell)
+        self._mode_button.setObjectName("compactModeButton")
+        self._mode_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._mode_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._mode_button.clicked.connect(self.toggle_dialog_mode)
+        row.addWidget(self._mode_button, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self._input = CompactPromptEdit(self)
         self._input.setObjectName("compactInput")
@@ -299,11 +369,11 @@ class CompactAIWindow(QWidget):
 
     def refresh_theme(self):
         background_color = ""
-        text_color = "#24242a"
+        user_text = ""
         opacity = 44
         if self._cfg:
             background_color = self._cfg.get("compact_ai_window_background_color", "")
-            text_color = self._cfg.get("compact_ai_window_text_color", "#24242a")
+            user_text = self._cfg.get("compact_ai_window_text_color", "")
             opacity = self._cfg.get("compact_ai_window_opacity", 44)
         if not background_color:
             background_color = self._cfg.get("user_avatar_color", "#e4004f") if self._cfg else "#e4004f"
@@ -317,31 +387,143 @@ class CompactAIWindow(QWidget):
         )
         hover = QColor(accent)
         hover.setAlpha(min(240, accent.alpha() + 38))
-        if not QColor(text_color).isValid():
-            text_color = "#24242a"
-        radius = self._control_radius()
-        button_radius = self._send_button.width() // 2 if hasattr(self, "_send_button") else 18
         solid_accent = QColor(background_color)
         if not solid_accent.isValid():
             solid_accent = QColor("#e4004f")
+
+        # Contrast calculation: auto-compute high-contrast white on dark/saturated backgrounds
+        if not user_text or user_text in ("#24242a", "#24121a"):
+            text_color = _contrast_text(solid_accent)
+        else:
+            text_color = user_text
+        if not QColor(text_color).isValid():
+            text_color = _contrast_text(solid_accent)
+
+        is_light_bg = (_contrast_text(solid_accent) == "#111827")
+        radius = self._control_radius()
+        button_radius = self._send_button.width() // 2 if hasattr(self, "_send_button") else 18
+        composer_radius = max(14, button_radius + 4)
         panel = QColor(solid_accent)
         panel.setAlpha(max(92, min(226, accent.alpha() + 56)))
         self._panel_color = panel
         self._panel_border_color = QColor(solid_accent)
         self._panel_border_color.setAlpha(max(86, min(218, accent.alpha() + 72)))
         self._shadow_color = QColor(0, 0, 0, 55 if panel.alpha() > 170 else 38)
-        output_bg = QColor(255, 255, 255, 42) if _contrast_text(solid_accent) == "#24121a" else QColor(0, 0, 0, 34)
-        input_bg = QColor(255, 255, 255, 56) if _contrast_text(solid_accent) == "#24121a" else QColor(0, 0, 0, 42)
-        subtle_border = QColor(255, 255, 255, 86) if _contrast_text(solid_accent) == "#24121a" else QColor(255, 255, 255, 44)
-        send_bg = QColor(solid_accent)
-        send_bg.setAlpha(236)
-        send_hover = QColor(solid_accent)
-        send_hover.setAlpha(255)
-        send_pressed = QColor(solid_accent.darker(116))
-        send_pressed.setAlpha(255)
-        send_text = _contrast_text(solid_accent)
+
+        is_output_visible = (hasattr(self, "_output") and self._output.isVisible() and self._output.height() > 0)
+        capsule_style = self._cfg.get("compact_ai_capsule_style", "frosted_acrylic") if self._cfg else "frosted_acrylic"
+        ph_color = None
+
+        if capsule_style == "frosted_acrylic":
+            self._panel_color = QColor(255, 255, 255, 228)
+            self._panel_border_color = QColor(255, 255, 255, 248)
+            self._shadow_color = QColor(0, 0, 0, 42)
+            text_color = "#0f172a"
+            output_bg = QColor(241, 245, 249, 230)
+            input_bg = QColor(0, 0, 0, 14) if is_output_visible else QColor(0, 0, 0, 0)
+            subtle_border = QColor(0, 0, 0, 36)
+            badge_bg = QColor(0, 0, 0, 20)
+            badge_border = QColor(0, 0, 0, 35)
+            badge_text = QColor(30, 41, 59)
+            send_bg = QColor("#0f172a")
+            send_hover = QColor("#1e293b")
+            send_pressed = QColor("#334155")
+            send_fg = QColor(255, 255, 255)
+            ph_color = QColor(100, 116, 139, 210)
+        elif capsule_style == "morfonica_gold":
+            self._panel_color = QColor(20, 20, 26, 245)
+            self._panel_border_color = QColor(212, 175, 55, 220)
+            self._shadow_color = QColor(0, 0, 0, 60)
+            text_color = "#f8fafc"
+            output_bg = QColor(10, 10, 14, 220)
+            input_bg = QColor(255, 255, 255, 18) if is_output_visible else QColor(0, 0, 0, 0)
+            subtle_border = QColor(212, 175, 55, 90)
+            badge_bg = QColor(212, 175, 55, 40)
+            badge_border = QColor(212, 175, 55, 110)
+            badge_text = QColor(246, 224, 94)
+            send_bg = QColor("#d4af37")
+            send_hover = QColor("#f6e05e")
+            send_pressed = QColor("#b89628")
+            send_fg = QColor("#1a1a24")
+            ph_color = QColor(148, 163, 184, 200)
+        elif is_light_bg:
+            output_bg = QColor(0, 0, 0, 24)
+            input_bg = QColor(0, 0, 0, 18) if is_output_visible else QColor(0, 0, 0, 0)
+            subtle_border = QColor(0, 0, 0, 40)
+            badge_bg = QColor(0, 0, 0, 22)
+            badge_border = QColor(0, 0, 0, 42)
+            badge_text = QColor(15, 23, 42)
+            send_bg = QColor(solid_accent.darker(110))
+            send_hover = QColor(solid_accent.darker(125))
+            send_pressed = QColor(solid_accent.darker(140))
+            send_fg = QColor(255, 255, 255)
+        else:
+            output_bg = QColor(0, 0, 0, 48)
+            input_bg = QColor(255, 255, 255, 22) if is_output_visible else QColor(255, 255, 255, 0)
+            subtle_border = QColor(255, 255, 255, 68)
+            badge_bg = QColor(0, 0, 0, 50)
+            badge_border = QColor(255, 255, 255, 55)
+            badge_text = QColor(255, 255, 255)
+            # High-contrast pop for send button
+            send_bg = QColor(255, 255, 255, 238)
+            send_hover = QColor(255, 255, 255, 255)
+            send_pressed = QColor(228, 228, 235, 255)
+            send_fg = QColor(solid_accent.darker(108))
+
         if hasattr(self, "_send_button") and isinstance(self._send_button, CompactSendButton):
-            self._send_button.set_colors(send_bg, send_hover, send_pressed, QColor(send_text))
+            self._send_button.set_colors(send_bg, send_hover, send_pressed, send_fg)
+
+        if hasattr(self, "_badge_label"):
+            disp = self._character_display_name()
+            self._badge_label.setText(disp[:4] if disp else "Pet")
+            self._badge_label.setStyleSheet(f"""
+                QLabel#compactCharBadge {{
+                    background: {_rgba(badge_bg)};
+                    border: 1px solid {_rgba(badge_border)};
+                    border-radius: {max(9, button_radius - 4)}px;
+                    color: {_rgba(badge_text)};
+                    font-size: {max(10, self._font_size() - 2)}px;
+                    font-weight: 700;
+                    padding: 2px 7px;
+                }}
+            """)
+
+        if hasattr(self, "_mode_button"):
+            self._sync_mode_ui()
+            is_short = (self._dialog_mode == "short_term")
+            if is_short:
+                mode_btn_bg = badge_bg
+                mode_btn_border = badge_border
+                mode_btn_text = badge_text
+            else:
+                mode_btn_bg = QColor(solid_accent)
+                mode_btn_bg.setAlpha(min(220, accent.alpha() + 50))
+                mode_btn_border = QColor(solid_accent)
+                mode_btn_border.setAlpha(240)
+                mode_btn_text = QColor("#ffffff") if is_light_bg else QColor(text_color)
+            self._mode_button.setStyleSheet(f"""
+                QPushButton#compactModeButton {{
+                    background: {_rgba(mode_btn_bg)};
+                    border: 1px solid {_rgba(mode_btn_border)};
+                    border-radius: {max(9, button_radius - 4)}px;
+                    color: {_rgba(mode_btn_text)};
+                    font-size: {max(10, self._font_size() - 2)}px;
+                    font-weight: 700;
+                    padding: 2px 7px;
+                }}
+                QPushButton#compactModeButton:hover {{
+                    background: {_rgba(hover)};
+                }}
+            """)
+
+        if hasattr(self, "_input"):
+            pal = self._input.palette()
+            if ph_color is None:
+                ph_color = QColor(text_color)
+                ph_color.setAlpha(175)
+            pal.setColor(QPalette.ColorRole.PlaceholderText, ph_color)
+            pal.setColor(QPalette.ColorRole.Text, QColor(text_color))
+            self._input.setPalette(pal)
 
         self.setStyleSheet(f"""
             CompactAIWindow {{
@@ -355,20 +537,23 @@ class CompactAIWindow(QWidget):
                 color: {text_color};
                 padding: 8px 10px;
                 font-size: {self._font_size()}px;
+                font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
                 selection-background-color: rgba(255, 255, 255, 96);
             }}
             QFrame#compactComposer {{
                 background: {_rgba(input_bg)};
-                border: 1px solid {_rgba(subtle_border)};
-                border-radius: {radius}px;
+                border: {'1px solid ' + _rgba(subtle_border) if is_output_visible else 'none'};
+                border-radius: {composer_radius}px;
             }}
             QTextEdit#compactInput {{
                 background: transparent;
                 border: none;
                 border-radius: 0px;
                 color: {text_color};
-                padding: 4px 2px;
+                padding: 4px 4px;
                 font-size: {self._font_size()}px;
+                font-weight: 600;
+                font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
                 selection-background-color: rgba(255, 255, 255, 96);
             }}
             QTextEdit#compactOutput:focus {{
@@ -381,7 +566,7 @@ class CompactAIWindow(QWidget):
                 background: transparent;
                 border: none;
                 border-radius: {button_radius}px;
-                color: {send_text};
+                color: {text_color};
             }}
             QPushButton#compactSendButton:hover {{
                 background: transparent;
@@ -427,6 +612,10 @@ class CompactAIWindow(QWidget):
         row_h = max(self._font_size() + 24, min(48, round(self.width() * 0.12)))
         button_size = max(28, row_h - 8)
         self._input_shell.setFixedHeight(row_h)
+        if hasattr(self, "_badge_label"):
+            self._badge_label.setFixedHeight(max(20, row_h - 12))
+        if hasattr(self, "_mode_button"):
+            self._mode_button.setFixedHeight(max(20, row_h - 12))
         self._input.setFixedHeight(max(26, row_h - 8))
         self._send_button.setFixedSize(button_size, button_size)
         self._update_output_height(animated=False)
@@ -492,7 +681,7 @@ class CompactAIWindow(QWidget):
         text = self._output.toPlainText().strip()
         if not text:
             self._output_scroll_needed = False
-            return self._base_output_height()
+            return 0
         doc = self._output.document()
         doc.setTextWidth(max(1, self._output.viewport().width()))
         content_height = int(round(doc.size().height())) + 18
@@ -502,8 +691,9 @@ class CompactAIWindow(QWidget):
 
     def _target_window_height(self) -> int:
         margins = self.layout().contentsMargins()
-        spacing = self.layout().spacing()
-        return self._target_output_height() + self._input_shell.height() + spacing + margins.top() + margins.bottom()
+        output_h = self._target_output_height()
+        spacing = self.layout().spacing() if output_h > 0 else 0
+        return output_h + self._input_shell.height() + spacing + margins.top() + margins.bottom()
 
     def _set_output_text(self, text: str, animated: bool = True):
         self._stream_output_synced = False
@@ -513,8 +703,16 @@ class CompactAIWindow(QWidget):
     def _update_output_height(self, animated: bool = True):
         if not hasattr(self, "_output") or not hasattr(self, "_input"):
             return
+        was_visible = self._output.isVisible()
         output_height = self._target_output_height()
-        self._output.setFixedHeight(output_height)
+        if output_height <= 0:
+            self._output.setVisible(False)
+            self._output.setFixedHeight(0)
+        else:
+            self._output.setVisible(True)
+            self._output.setFixedHeight(output_height)
+        if self._output.isVisible() != was_visible:
+            self.refresh_theme()
         self._sync_scrollbar_policies()
         target_height = self._target_window_height()
         if self.height() == target_height:
@@ -586,16 +784,37 @@ class CompactAIWindow(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
-        rect = QRectF(self.rect()).adjusted(4, 4, -4, -4)
-        path = QPainterPath()
-        path.addRoundedRect(rect, 16, 16)
+        rect = QRectF(self.rect()).adjusted(3, 3, -3, -3)
+        is_pill = (not hasattr(self, "_output") or not self._output.isVisible() or self._output.height() <= 0)
+        r = (rect.height() / 2.0) if is_pill else 18.0
 
-        shadow = QPainterPath(path)
-        shadow.translate(0, 3)
+        path = QPainterPath()
+        path.addRoundedRect(rect, r, r)
+
+        # Ambient drop shadow
+        shadow = QPainterPath()
+        shadow.addRoundedRect(rect.translated(0, 3), r, r)
         painter.fillPath(shadow, QBrush(self._shadow_color))
-        painter.fillPath(path, QBrush(self._panel_color))
-        painter.setPen(QPen(self._panel_border_color, 1))
-        painter.drawPath(path)
+
+        # Body gradient
+        body_grad = QLinearGradient(rect.topLeft(), rect.bottomLeft())
+        body_grad.setColorAt(0.0, self._panel_color.lighter(115))
+        body_grad.setColorAt(1.0, self._panel_color.darker(105))
+        painter.fillPath(path, QBrush(body_grad))
+
+        # Specular gloss on top rim
+        painter.save()
+        painter.setClipPath(path)
+        specular_rect = QRectF(rect.x(), rect.y(), rect.width(), max(6.0, rect.height() * 0.48))
+        spec_grad = QLinearGradient(specular_rect.topLeft(), specular_rect.bottomLeft())
+        spec_grad.setColorAt(0.0, QColor(255, 255, 255, 80))
+        spec_grad.setColorAt(1.0, QColor(255, 255, 255, 0))
+        painter.fillRect(specular_rect, QBrush(spec_grad))
+        painter.restore()
+
+        # Border stroke
+        border_pen = QPen(self._panel_border_color, 1.2)
+        painter.strokePath(path, border_pen)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -650,6 +869,23 @@ class CompactAIWindow(QWidget):
         except Exception:
             pass
 
+    def _should_show_chat_output(self) -> bool:
+        if self._dialog_mode == "long_term":
+            return True
+        if self._cfg:
+            return bool(self._cfg.get("compact_ai_show_chat_output", False))
+        return False
+
+    def _character_display_name(self) -> str:
+        if self._model_manager and hasattr(self._model_manager, "get_display_name"):
+            try:
+                name = self._model_manager.get_display_name(self._character)
+                if name:
+                    return str(name)
+            except Exception:
+                pass
+        return self._character.capitalize() if self._character else ""
+
     def set_character(self, character: str):
         if character == self._character:
             return
@@ -660,6 +896,7 @@ class CompactAIWindow(QWidget):
         self._history.clear()
         self._external_stream_text = ""
         self._set_output_text("", animated=False)
+        self.refresh_theme()
         self._load_last_conversation()
 
     def _load_last_conversation(self):
@@ -669,7 +906,8 @@ class CompactAIWindow(QWidget):
         if not last:
             return
         self._conv_id = last["id"]
-        for message in self._db.get_messages(self._conv_id)[-12:]:
+        limit = 20 if self._dialog_mode == "long_term" else 12
+        for message in self._db.get_messages(self._conv_id)[-limit:]:
             role = message.get("role", "")
             if role not in {"user", "assistant"}:
                 continue
@@ -781,6 +1019,10 @@ class CompactAIWindow(QWidget):
             return
         if self._handle_local_memory_command(text):
             return
+        if self._handle_todo_command(text):
+            if self._dialog_mode == "short_term":
+                self.hide()
+            return
         if self._worker is not None:
             self._input.setPlaceholderText(_tr("CompactAIWindow.input_busy_stop", default="正在回复，输入 @stop 或 @停止 中断"))
             return
@@ -799,11 +1041,16 @@ class CompactAIWindow(QWidget):
         conv_id = self._ensure_conversation()
         self._last_user_message_id = self._db.add_message(conv_id, "user", text)
         self._history.append({"role": "user", "content": text})
-        self._history = self._history[-12:]
+        history_limit = 20 if self._dialog_mode == "long_term" else 12
+        self._history = self._history[-history_limit:]
         self._last_user_text = text
         self._stream_text = ""
         self._thinking_text = ""
-        self._set_output_text("...")
+        if self._should_show_chat_output():
+            self._set_output_text("...")
+        else:
+            if self._output.toPlainText().strip() in {"...", _tr("CompactAIWindow.llm_not_configured")}:
+                self._set_output_text("")
         self._set_busy(True)
 
         messages = self._build_messages()
@@ -811,14 +1058,14 @@ class CompactAIWindow(QWidget):
         tool_config = self._tool_config_snapshot()
         web_search = bool(self._cfg.get("llm_web_search_enabled", False)) if self._cfg else False
         show_sources = bool(self._cfg.get("llm_web_search_show_sources", True)) if self._cfg else True
-        if self._use_responses_api(api_url) and not web_search:
+        if self._use_responses_api(api_url):
             self._worker = ResponsesStreamWorker(
                 api_url,
                 api_key,
                 model_id,
                 messages,
                 enable_thinking,
-                False,
+                web_search,
                 self,
                 show_search_sources=show_sources,
                 tool_config=tool_config,
@@ -841,6 +1088,8 @@ class CompactAIWindow(QWidget):
         self._worker.finished.connect(self._on_response_finished)
         self._worker.error.connect(self._on_response_error)
         self._worker.start()
+        if self._dialog_mode == "short_term":
+            self.hide()
 
     def _build_messages(self) -> list[dict]:
         system_prompt = build_system_prompt(self._character, self._cfg)
@@ -855,7 +1104,8 @@ class CompactAIWindow(QWidget):
             if external_context:
                 system_prompt += "\n\n" + external_context
         messages = [{"role": "system", "content": system_prompt}]
-        history = [dict(item) for item in self._history[-12:]]
+        history_limit = 20 if self._dialog_mode == "long_term" else 8
+        history = [dict(item) for item in self._history[-history_limit:]]
         now = datetime.now().strftime("%Y-%m-%d %I:%M %p")
         for i in range(len(history) - 1, -1, -1):
             if history[i].get("role") == "user":
@@ -919,17 +1169,18 @@ class CompactAIWindow(QWidget):
             return
         had_stream = bool(self._stream_text)
         self._stream_text += clean
-        if had_stream and self._stream_output_synced:
-            # Append only the delta instead of re-setting (and re-laying-out)
-            # the whole accumulated document on every streamed chunk.
-            self._output.moveCursor(QTextCursor.MoveOperation.End)
-            self._output.insertPlainText(clean)
-            self._update_output_height()
-            self._stream_output_synced = True
-        else:
-            self._set_output_text(self._stream_text)
-            self._stream_output_synced = True
-        self._scroll_output_to_bottom()
+        if self._should_show_chat_output():
+            if had_stream and self._stream_output_synced:
+                # Append only the delta instead of re-setting (and re-laying-out)
+                # the whole accumulated document on every streamed chunk.
+                self._output.moveCursor(QTextCursor.MoveOperation.End)
+                self._output.insertPlainText(clean)
+                self._update_output_height()
+                self._stream_output_synced = True
+            else:
+                self._set_output_text(self._stream_text)
+                self._stream_output_synced = True
+            self._scroll_output_to_bottom()
 
     def _on_response_finished(self, full_text: str, reasoning_text: str, actions: list):
         if self.sender() is not self._worker:
@@ -937,20 +1188,46 @@ class CompactAIWindow(QWidget):
         del actions
         acts = parse_action_tags(full_text)
         clean = strip_action_tags(full_text)
+        try:
+            from todo_manager import parse_todo_tag, strip_todo_tags
+            todo_info = parse_todo_tag(full_text)
+            if todo_info:
+                t_mode, t_mins, t_task = todo_info
+                clean = strip_todo_tags(clean)
+                if self._todo_manager is not None:
+                    if t_mode == "cancel":
+                        self._todo_manager.cancel()
+                    elif t_mode == "overtime":
+                        self._todo_manager.start_game_supervision(t_mins, task_name=t_task)
+                    elif t_mode == "focus":
+                        self._todo_manager.start_focus_supervision(t_mins, task_name=t_task)
+                else:
+                    from action_bus import publish_todo_command
+                    publish_todo_command(self._character, f"[TODO_{t_mode.upper()}:{t_mins}:{t_task}]")
+        except Exception:
+            pass
         reasoning_clean = strip_action_tags(reasoning_text or self._thinking_text)
         if clean:
             self._stream_text = clean
-            self._set_output_text(clean)
+            if self._should_show_chat_output():
+                self._set_output_text(clean)
             self._history.append({"role": "assistant", "content": clean})
-            self._history = self._history[-12:]
+            history_limit = 20 if self._dialog_mode == "long_term" else 12
+            self._history = self._history[-history_limit:]
             self._db.add_message(self._ensure_conversation(), "assistant", clean, reasoning_clean)
             self._speak_tts_text(clean, self._character)
         self._apply_relationship_update(clean, acts)
         for action in acts:
             self.action_triggered.emit(action)
+        if clean:
+            self.assistant_reply_finished.emit(clean, acts)
         self._worker = None
         self._set_busy(False)
         self._input.setFocus()
+
+    def focus_input(self):
+        self._input.setFocus()
+        self._input.selectAll()
 
     def _user_memory_key(self) -> str:
         return user_key_from_config(self._cfg)
@@ -1062,6 +1339,27 @@ class CompactAIWindow(QWidget):
                 self._input.clear()
                 self._set_relationship_value_text("mood", stripped[len(prefix):])
                 return True
+        return False
+
+    def _handle_todo_command(self, text: str) -> bool:
+        if self._todo_manager is not None:
+            if self._todo_manager.parse_text_input(text):
+                self._input.clear()
+                return True
+        else:
+            try:
+                from todo_manager import parse_todo_intent
+                from action_bus import publish_todo_command
+                intent = parse_todo_intent(text, self._character)
+                if intent is not None:
+                    publish_todo_command(self._character, text)
+                    self._input.clear()
+                    msg = intent["message"]
+                    self._speak_tts_text(msg, self._character)
+                    self.assistant_reply_finished.emit(msg, intent.get("actions", []))
+                    return True
+            except Exception:
+                pass
         return False
 
     def _apply_relationship_update(self, assistant_text: str, actions: list[str]):
@@ -1221,10 +1519,12 @@ class CompactAIWindow(QWidget):
     def _set_busy(self, busy: bool):
         self._send_button.setEnabled(True)
         self._input.setEnabled(True)
-        self._input.setPlaceholderText(
-            _tr("CompactAIWindow.input_busy_stop", default="正在回复，输入 @stop 或 @停止 中断")
-            if busy else _tr("CompactAIWindow.input_placeholder")
-        )
+        if busy:
+            self._input.setPlaceholderText(
+                _tr("CompactAIWindow.input_busy_stop", default="正在回复，输入 @stop 或 @停止 中断")
+            )
+        else:
+            self._sync_mode_ui()
 
     @staticmethod
     def _is_interrupt_command(text: str) -> bool:
