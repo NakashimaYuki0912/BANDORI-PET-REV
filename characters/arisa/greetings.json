@@ -236,5 +236,31 @@
       "tts_text": "ほら、保存して、水飲んで、肩を動かせ。……ここまで言ったんだから、聞こえなかったふりすんなよ。",
       "motion": "natural01"
     }
+  ],
+  "repeated_click": [
+    {
+      "text": "喂！别一直戳我啊！很烦耶！[angry01]",
+      "tts_text": "ちょっと！ずっとつついてくんじゃねーよ！うっとうしい！",
+      "motion": "angry01",
+      "expression": "angry"
+    },
+    {
+      "text": "都说了不要一直点我了！你这家伙听不懂人话吗！？[angry01]",
+      "tts_text": "何回もつつくなって言ってんだろ！人の話聞いてんのかよ！？",
+      "motion": "angry01",
+      "expression": "angry"
+    },
+    {
+      "text": "呜……别、别乱戳了！[shame01]",
+      "tts_text": "うぅ……へ、変なとこつつくなよな！",
+      "motion": "shame01",
+      "expression": "shame"
+    },
+    {
+      "text": "再点……再点我就不理你了！[angry01]",
+      "tts_text": "もう……これ以上つついたら、無視すっからな！",
+      "motion": "angry01",
+      "expression": "angry"
+    }
   ]
 }

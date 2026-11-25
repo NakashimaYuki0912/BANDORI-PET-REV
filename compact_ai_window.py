@@ -221,7 +221,9 @@ class CompactAIWindow(QWidget):
         self._thinking_text = ""
         self._tts_worker = None
         self._tts_workers = {}
+        self._tts_pending_segments = []
         self._tts_pending_audio = {}
+        self._tts_completed_sequences = set()
         self._tts_next_enqueue_sequence = 0
         self._tts_total_sequences = 0
         self._tts_generation = 0
@@ -1393,6 +1395,10 @@ class CompactAIWindow(QWidget):
     def _tts_config_snapshot(self) -> dict:
         keys = (
             "tts_api_url",
+            "tts_gpt_sovits_root",
+            "tts_gpt_sovits_remote_root",
+            "tts_gpt_sovits_runtime",
+            "tts_custom_weights",
             "tts_language",
             "tts_reference_character",
             "tts_streaming",
@@ -1401,6 +1407,7 @@ class CompactAIWindow(QWidget):
             "llm_api_url",
             "llm_api_key",
             "llm_model_id",
+            "llm_api_mode",
             "llm_aux_api_url",
             "llm_aux_api_key",
             "llm_aux_model_id",
@@ -1419,7 +1426,9 @@ class CompactAIWindow(QWidget):
             workers.append(self._tts_worker)
         self._tts_worker = None
         self._tts_workers.clear()
+        self._tts_pending_segments.clear()
         self._tts_pending_audio.clear()
+        self._tts_completed_sequences.clear()
         self._tts_next_enqueue_sequence = 0
         self._tts_total_sequences = 0
         for worker in workers:
@@ -1447,31 +1456,50 @@ class CompactAIWindow(QWidget):
         self._tts_total_sequences = len(segments)
         self._tts_next_enqueue_sequence = 0
         config = self._tts_config_snapshot()
-        for sequence, segment in enumerate(segments):
-            worker = TTSRequestWorker(sequence, generation, segment, character, config, self)
-            self._tts_workers[sequence] = worker
-            if sequence == 0:
-                self._tts_worker = worker
-            worker.audio_ready.connect(self._on_tts_audio_ready)
-            worker.error.connect(self._on_tts_error)
-            worker.finished.connect(self._on_tts_worker_finished)
-            worker.start()
+        self._tts_pending_segments = [
+            (sequence, generation, segment, character, config)
+            for sequence, segment in enumerate(segments)
+        ]
+        self._start_next_tts_worker()
+
+    def _start_next_tts_worker(self):
+        if self._tts_workers or not self._tts_pending_segments:
+            return
+        sequence, generation, segment, character, config = self._tts_pending_segments.pop(0)
+        if generation != self._tts_generation:
+            return
+        worker = TTSRequestWorker(sequence, generation, segment, character, config, self)
+        self._tts_workers[sequence] = worker
+        if sequence == 0:
+            self._tts_worker = worker
+        worker.audio_ready.connect(self._on_tts_audio_ready)
+        worker.error.connect(self._on_tts_error)
+        worker.finished.connect(self._on_tts_worker_finished)
+        worker.start()
 
     def _on_tts_audio_ready(self, sequence: int, generation: int, audio: bytes, media_type: str):
         sender = self.sender()
         if generation != self._tts_generation or sender not in self._tts_workers.values():
             return
-        self._tts_pending_audio[sequence] = (audio, media_type)
+        if sequence < self._tts_next_enqueue_sequence:
+            return
+        self._tts_pending_audio.setdefault(sequence, []).append((audio, media_type))
         self._enqueue_ready_tts_audio()
 
     def _enqueue_ready_tts_audio(self):
-        while self._tts_next_enqueue_sequence in self._tts_pending_audio:
-            audio_item = self._tts_pending_audio.pop(self._tts_next_enqueue_sequence)
-            self._tts_next_enqueue_sequence += 1
-            if not audio_item:
+        while True:
+            sequence = self._tts_next_enqueue_sequence
+            chunks = self._tts_pending_audio.get(sequence)
+            if chunks:
+                self._tts_pending_audio[sequence] = []
+                for audio, media_type in chunks:
+                    self._tts_player.enqueue(audio, media_type)
+            if sequence in self._tts_completed_sequences and not self._tts_pending_audio.get(sequence):
+                self._tts_pending_audio.pop(sequence, None)
+                self._tts_completed_sequences.remove(sequence)
+                self._tts_next_enqueue_sequence += 1
                 continue
-            audio, media_type = audio_item
-            self._tts_player.enqueue(audio, media_type)
+            break
 
     def _on_tts_error(self, error_msg: str):
         del error_msg
@@ -1486,11 +1514,10 @@ class CompactAIWindow(QWidget):
                 break
         if worker is self._tts_worker:
             self._tts_worker = None
-        if sequence is None:
-            return
-        if sequence >= self._tts_next_enqueue_sequence and sequence not in self._tts_pending_audio:
-            self._tts_pending_audio[sequence] = None
+        if sequence is not None:
+            self._tts_completed_sequences.add(sequence)
             self._enqueue_ready_tts_audio()
+        self._start_next_tts_worker()
 
     def _on_tts_level_changed(self, level: float):
         if self._tts_playing_character:
@@ -1501,6 +1528,7 @@ class CompactAIWindow(QWidget):
             publish_lip_sync(self._tts_playing_character, 0.0)
         if (
             self._tts_workers
+            or self._tts_pending_segments
             or self._tts_pending_audio
             or self._tts_next_enqueue_sequence < self._tts_total_sequences
         ):

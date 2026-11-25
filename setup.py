@@ -175,6 +175,8 @@ build_exe_options = {
         "PySide6.QtGui",
         "PySide6.QtOpenGLWidgets",
         "PySide6.QtWidgets",
+        "PySide6.QtNetwork",
+        "PySide6.QtWebSockets",
         "darkdetect",
         "lupa.luajit21",
         "numpy",

@@ -10,7 +10,19 @@ import tempfile
 import threading
 import time
 import urllib.error
+from contextlib import contextmanager
+from urllib.parse import urlsplit
 import urllib.request
+
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None
+
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 
 import numpy as np
 import requests
@@ -19,7 +31,8 @@ import soundfile as sf
 
 from PySide6.QtCore import QObject, QThread, QTimer, Signal
 
-from daily_chat import complete_daily_chat_entries
+from daily_chat import daily_chat_entries, complete_daily_chat_entries
+from repeated_click import offline_voice_path, repeated_click_entries
 from process_utils import app_base_dir
 
 # ---------------------------------------------------------------------------
@@ -32,6 +45,9 @@ _dialog_json_mtime: float = 0.0
 
 # Reference audio path per character (content of audio_reference/ rarely changes)
 _audio_path_cache: dict[str, str] = {}
+
+# Resolved GPT-SoVITS model/reference paths per (ref_char, root, custom_json)
+_model_paths_cache: dict[tuple[str, str, str], dict[str, str]] = {}
 
 # LoRA list from backend — refresh every 60 s; use sentinel None = "never fetched yet"
 _lora_list_cache: dict | None = None     # {} means "server has no loras"
@@ -47,6 +63,9 @@ _current_gpt_sovits_weights: tuple[str, str] | None = None
 # Serialise set_gpt_weights + set_sovits_weights + POST /tts so concurrent
 # workers (prewarm, chat, double-click) never race on weight switching.
 _tts_lock = threading.Lock()
+_tts_http_sessions: dict[bool, requests.Session] = {}
+_interactive_tts_count = 0
+_interactive_tts_lock = threading.Lock()
 
 _GPT_SOVITS_REMOTE_ROOT = "/home/kirby/minecraft/bandori-tts"
 
@@ -216,8 +235,203 @@ def effective_tts_voice_profile(character: str, config: dict) -> dict[str, float
 
 
 def _remote_tts_root(config: dict) -> str:
-    value = str(config.get("tts_gpt_sovits_remote_root", "") or "").strip()
+    value = str(
+        config.get("tts_gpt_sovits_root", "")
+        or config.get("tts_gpt_sovits_remote_root", "")
+        or ""
+    ).strip()
     return (value or _GPT_SOVITS_REMOTE_ROOT).rstrip("/")
+
+
+def _is_local_tts_url(url: str) -> bool:
+    host = urlsplit(str(url or "").strip()).hostname
+    return host in {"127.0.0.1", "localhost", "::1"}
+
+
+def _tts_url_digest(url: str) -> str:
+    normalized = str(url or "http://127.0.0.1:9880/").strip().rstrip("/").lower()
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+
+
+def _tts_ipc_paths(url: str) -> tuple[pathlib.Path, pathlib.Path, pathlib.Path]:
+    digest = _tts_url_digest(url)
+    base = pathlib.Path(tempfile.gettempdir())
+    return (
+        base / f"bandoripet_tts_{digest}.lock",
+        base / f"bandoripet_tts_{digest}.json",
+        base / f"bandoripet_tts_{digest}.busy",
+    )
+
+
+def _get_tts_session(url: str) -> requests.Session:
+    """Return a keep-alive HTTP session; callers must hold ``_tts_lock``."""
+    local = _is_local_tts_url(url)
+    session = _tts_http_sessions.get(local)
+    if session is None:
+        session = requests.Session()
+        if local:
+            session.trust_env = False
+        _tts_http_sessions[local] = session
+    return session
+
+
+@contextmanager
+def _cross_process_tts_lock(url: str, is_interrupted=None, timeout: float = 300.0):
+    lock_path, _, _ = _tts_ipc_paths(url)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o666)
+    acquired = False
+    try:
+        if os.fstat(fd).st_size == 0:
+            os.write(fd, b"\0")
+        deadline = time.monotonic() + timeout
+        while True:
+            if is_interrupted is not None and is_interrupted():
+                raise InterruptedError("TTS request interrupted while waiting for lock")
+            try:
+                if msvcrt is not None:
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                elif fcntl is not None:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("Timed out waiting for TTS process lock")
+                time.sleep(0.025)
+        yield
+    finally:
+        if acquired:
+            try:
+                if msvcrt is not None:
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                elif fcntl is not None:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+        os.close(fd)
+
+
+def _norm_weight_path(path: str) -> str:
+    return str(path or "").strip().replace("\\", "/")
+
+
+def _read_tts_state_weights(url: str) -> tuple[str, str, float]:
+    _, state_path, _ = _tts_ipc_paths(url)
+    try:
+        data = json.loads(state_path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return (
+                _norm_weight_path(data.get("gpt", "")),
+                _norm_weight_path(data.get("sovits", "")),
+                float(data.get("updated_at", 0.0) or 0.0),
+            )
+    except (OSError, ValueError, TypeError):
+        pass
+    return "", "", 0.0
+
+
+def _write_tts_state_weights(url: str, gpt: str, sovits: str):
+    _, state_path, _ = _tts_ipc_paths(url)
+    payload = {
+        "gpt": _norm_weight_path(gpt),
+        "sovits": _norm_weight_path(sovits),
+        "updated_at": time.time(),
+    }
+    tmp_path = None
+    try:
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(suffix=".json", prefix=".tmp_tts_", dir=str(state_path.parent))
+        try:
+            os.write(fd, json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+        finally:
+            os.close(fd)
+        os.replace(tmp_path, str(state_path))
+        tmp_path = None
+    except OSError:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+
+def _read_local_runtime_weights(config: dict, url: str) -> tuple[str, str, float] | None:
+    if not _is_local_tts_url(url):
+        return None
+    runtime = str((config or {}).get("tts_gpt_sovits_runtime", "") or "").strip()
+    if not runtime:
+        return None
+    yaml_path = pathlib.Path(runtime) / "GPT_SoVITS" / "configs" / "bandoripet_local.yaml"
+    try:
+        stat = yaml_path.stat()
+        text = yaml_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    in_custom = False
+    gpt = ""
+    sovits = ""
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if not raw_line[0].isspace():
+            in_custom = stripped.startswith("custom:")
+            continue
+        if in_custom:
+            if stripped.startswith("t2s_weights_path:"):
+                gpt = stripped.split(":", 1)[1].strip().strip("'\"")
+            elif stripped.startswith("vits_weights_path:"):
+                sovits = stripped.split(":", 1)[1].strip().strip("'\"")
+    if gpt and sovits:
+        return _norm_weight_path(gpt), _norm_weight_path(sovits), stat.st_mtime
+    return None
+
+
+def _configured_tts_url(config: dict | None) -> str:
+    url = str((config or {}).get("tts_api_url", "") or "").strip() or "http://127.0.0.1:9880/"
+    return url if url.endswith("/") else url + "/"
+
+
+@contextmanager
+def _interactive_tts_scope(url: str):
+    global _interactive_tts_count
+    _, _, busy_path = _tts_ipc_paths(url)
+    with _interactive_tts_lock:
+        _interactive_tts_count += 1
+        try:
+            busy_path.write_text(
+                json.dumps({"pid": os.getpid(), "until": time.time() + 45.0}),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+    try:
+        yield
+    finally:
+        with _interactive_tts_lock:
+            _interactive_tts_count = max(0, _interactive_tts_count - 1)
+            if _interactive_tts_count == 0:
+                try:
+                    busy_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+
+def is_interactive_tts_busy(config: dict | None = None) -> bool:
+    """Return True while an interactive TTS request is active in this or another process."""
+    with _interactive_tts_lock:
+        if _interactive_tts_count > 0:
+            return True
+    url = _configured_tts_url(config)
+    _, _, busy_path = _tts_ipc_paths(url)
+    try:
+        data = json.loads(busy_path.read_text(encoding="utf-8"))
+        return float(data.get("until", 0.0) or 0.0) > time.time()
+    except (OSError, ValueError, TypeError):
+        return False
 
 
 def _gpt_sovits_model_paths(character: str, config: dict) -> dict[str, str]:
@@ -226,12 +440,83 @@ def _gpt_sovits_model_paths(character: str, config: dict) -> dict[str, str]:
     sovits_file = _GPT_SOVITS_SOVITS_FILES.get(ref_char)
     if not gpt_file or not sovits_file:
         raise ValueError(f"GPT-SoVITS weights not configured for character: {character}")
+
+    custom_weights = config.get("tts_custom_weights", {}) if isinstance(config, dict) else {}
+    if isinstance(custom_weights, dict) and ref_char in custom_weights:
+        entry = custom_weights[ref_char]
+        if isinstance(entry, dict) and entry.get("gpt") and entry.get("sovits"):
+            ref_path = entry.get("reference")
+            if not ref_path:
+                cached_ref_wav = app_base_dir() / "tts_cache" / "audio_reference_wav" / f"{ref_char}.wav"
+                root_wav = pathlib.Path(_remote_tts_root(config)) / "audio_reference_wav" / f"{ref_char}.wav"
+                local_ref_wav = app_base_dir() / "audio_reference" / f"{ref_char}.wav"
+                local_ref_mp3 = app_base_dir() / "audio_reference" / f"{ref_char}.mp3"
+                ref_path = str(
+                    next(
+                        (p for p in (cached_ref_wav, root_wav, local_ref_wav, local_ref_mp3) if p.exists()),
+                        local_ref_mp3,
+                    )
+                )
+            return {
+                "gpt": str(entry["gpt"]).replace("\\", "/"),
+                "sovits": str(entry["sovits"]).replace("\\", "/"),
+                "reference": str(ref_path).replace("\\", "/"),
+            }
+
     root = _remote_tts_root(config)
-    return {
-        "gpt": f"{root}/GPT-SoVITS/GPT_weights_v2/{gpt_file}",
-        "sovits": f"{root}/GPT-SoVITS/SoVITS_weights_v2/{sovits_file}",
-        "reference": f"{root}/audio_reference_wav/{ref_char}.wav",
+    if root == _GPT_SOVITS_REMOTE_ROOT:
+        return {
+            "gpt": f"{root}/GPT-SoVITS/GPT_weights_v2/{gpt_file}",
+            "sovits": f"{root}/GPT-SoVITS/SoVITS_weights_v2/{sovits_file}",
+            "reference": f"{root}/audio_reference_wav/{ref_char}.wav",
+        }
+
+    cache_key = (ref_char, root, "")
+    cached = _model_paths_cache.get(cache_key)
+    if cached is not None and all(pathlib.Path(p).exists() for p in cached.values()):
+        return dict(cached)
+
+    root_path = pathlib.Path(root)
+
+    # 1. GPT weights resolution
+    gpt_candidates = [
+        root_path / "weights" / "ckpt_files" / gpt_file,
+        root_path / "GPT_weights_v2" / gpt_file,
+        root_path / "GPT-SoVITS" / "GPT_weights_v2" / gpt_file,
+        root_path / "GPT_weights" / gpt_file,
+        root_path / gpt_file,
+    ]
+    resolved_gpt = next((p for p in gpt_candidates if p.exists()), gpt_candidates[0])
+
+    # 2. SoVITS weights resolution
+    sovits_candidates = [
+        root_path / "weights" / "pth_files" / sovits_file,
+        root_path / "SoVITS_weights_v2" / sovits_file,
+        root_path / "GPT-SoVITS" / "SoVITS_weights_v2" / sovits_file,
+        root_path / "SoVITS_weights" / sovits_file,
+        root_path / sovits_file,
+    ]
+    resolved_sovits = next((p for p in sovits_candidates if p.exists()), sovits_candidates[0])
+
+    # 3. Reference audio resolution (prefer pre-decoded WAV over MP3)
+    ref_candidates = [
+        app_base_dir() / "tts_cache" / "audio_reference_wav" / f"{ref_char}.wav",
+        root_path / "audio_reference_wav" / f"{ref_char}.wav",
+        app_base_dir() / "audio_reference" / f"{ref_char}.wav",
+        app_base_dir() / "audio_reference" / f"{ref_char}.mp3",
+        root_path / "audio_reference" / f"{ref_char}.wav",
+        root_path / "audio_reference" / f"{ref_char}.mp3",
+    ]
+    resolved_ref = next((p for p in ref_candidates if p.exists()), ref_candidates[0])
+
+    result = {
+        "gpt": str(resolved_gpt).replace("\\", "/"),
+        "sovits": str(resolved_sovits).replace("\\", "/"),
+        "reference": str(resolved_ref).replace("\\", "/"),
     }
+    if all(pathlib.Path(p).exists() for p in result.values()):
+        _model_paths_cache[cache_key] = dict(result)
+    return result
 
 
 def _tts_api_language_code(language: str) -> str:
@@ -249,6 +534,122 @@ def _tts_api_language_code(language: str) -> str:
     return values.get(language, str(language or "zh").strip() or "zh")
 
 
+def _select_gpt_sovits_split_params(text: str, *, streaming: bool = False) -> tuple[str, int]:
+    """Choose GPT-SoVITS split method and batch size for a single sentence/chunk.
+
+    Short/medium sentences (<= 60 chars) are already segmented by the caller, so
+    using ``cut0`` avoids GPT-SoVITS re-splitting on every comma into multiple
+    serial T2S passes. Longer passages use ``cut2`` with batching when
+    non-streaming, or client-side clause chunking when streaming.
+    """
+    if len(str(text or "").strip()) <= 60:
+        return "cut0", 1
+    if streaming:
+        return "cut2", 1
+    return "cut2", 4
+
+
+def _pcm_to_wav_bytes(
+    pcm: bytes,
+    sample_rate: int = 32000,
+    channels: int = 1,
+    sample_width: int = 2,
+) -> bytes:
+    """Wrap raw PCM frames in a standard 44-byte RIFF/WAVE header."""
+    byte_rate = sample_rate * channels * sample_width
+    block_align = channels * sample_width
+    data_size = len(pcm)
+    header = struct.pack(
+        "<4sI4s4sIHHIIHH4sI",
+        b"RIFF",
+        36 + data_size,
+        b"WAVE",
+        b"fmt ",
+        16,
+        1,
+        channels,
+        sample_rate,
+        byte_rate,
+        block_align,
+        sample_width * 8,
+        b"data",
+        data_size,
+    )
+    return header + pcm
+
+
+def _parse_wav_stream_header(buffer: bytearray) -> tuple[int, int, int, int] | None:
+    """Parse a streaming WAV header; return ``(data_offset, sr, channels, width)``."""
+    if len(buffer) < 44 or buffer[:4] != b"RIFF" or buffer[8:12] != b"WAVE":
+        return None
+    pos = 12
+    channels = 1
+    sample_rate = 32000
+    sample_width = 2
+    found_fmt = False
+    while pos + 8 <= len(buffer):
+        chunk_id = bytes(buffer[pos:pos + 4])
+        chunk_size = struct.unpack_from("<I", buffer, pos + 4)[0]
+        pos += 8
+        if chunk_id == b"fmt " and pos + 16 <= len(buffer):
+            channels = max(1, struct.unpack_from("<H", buffer, pos + 2)[0])
+            sample_rate = max(8000, struct.unpack_from("<I", buffer, pos + 4)[0])
+            bits_per_sample = max(8, struct.unpack_from("<H", buffer, pos + 14)[0])
+            sample_width = max(1, bits_per_sample // 8)
+            found_fmt = True
+        elif chunk_id == b"data":
+            if found_fmt:
+                return pos, sample_rate, channels, sample_width
+            return None
+        pos += chunk_size + (chunk_size & 1)
+    return None
+
+
+def _iter_wav_stream_chunks(
+    response,
+    is_interrupted=None,
+    min_chunk_bytes: int = 4096,
+):
+    """Yield complete playable WAV chunks from a GPT-SoVITS ``streaming_mode=True`` stream."""
+    buf = bytearray()
+    header_parsed = False
+    sample_rate = 32000
+    channels = 1
+    sample_width = 2
+    frame_bytes = 2
+    for chunk in response.iter_content(chunk_size=None):
+        if is_interrupted is not None and is_interrupted():
+            close = getattr(response, "close", None)
+            if callable(close):
+                close()
+            return
+        if not chunk:
+            continue
+        buf.extend(chunk)
+        if not header_parsed:
+            if len(buf) >= 4 and buf[:4] != b"RIFF":
+                raise ValueError("Unexpected non-WAV stream from TTS server")
+            parsed = _parse_wav_stream_header(buf)
+            if parsed is None:
+                continue
+            data_offset, sample_rate, channels, sample_width = parsed
+            frame_bytes = max(1, channels * sample_width)
+            del buf[:data_offset]
+            header_parsed = True
+        usable = (len(buf) // frame_bytes) * frame_bytes
+        if usable >= min_chunk_bytes:
+            pcm = bytes(buf[:usable])
+            del buf[:usable]
+            yield _pcm_to_wav_bytes(pcm, sample_rate, channels, sample_width)
+
+    if header_parsed:
+        usable = (len(buf) // frame_bytes) * frame_bytes
+        if usable > 0:
+            yield _pcm_to_wav_bytes(bytes(buf[:usable]), sample_rate, channels, sample_width)
+    elif len(buf) > 44:
+        yield bytes(buf)
+
+
 def _gpt_sovits_payload(
     *,
     text: str,
@@ -260,22 +661,27 @@ def _gpt_sovits_payload(
     top_k: int,
     top_p: float,
     repetition_penalty: float,
+    text_split_method: str = "cut5",
+    batch_size: int = 1,
+    streaming_mode: bool = False,
 ) -> dict:
+    safe_text = str(text or "").replace("〜", "ー").replace("～", "ー")
+    safe_prompt = str(prompt_text or "").replace("〜", "ー").replace("～", "ー")
     return {
-        "text": text,
+        "text": safe_text,
         "text_lang": _tts_api_language_code(text_language),
         "ref_audio_path": reference_path,
-        "prompt_text": prompt_text,
+        "prompt_text": safe_prompt,
         "prompt_lang": "ja",
         "top_k": top_k,
         "top_p": top_p,
         "temperature": temperature,
         "speed_factor": speed_factor,
         "repetition_penalty": repetition_penalty,
-        "text_split_method": "cut5",
-        "batch_size": 1,
+        "text_split_method": text_split_method,
+        "batch_size": max(1, int(batch_size)),
         "media_type": "wav",
-        "streaming_mode": False,
+        "streaming_mode": bool(streaming_mode),
     }
 
 
@@ -358,7 +764,78 @@ _SHORT_SURNAME_GIVEN_NAME_ALIASES = {
     "凑友希那": "友希那",
     "要乐奈": "乐奈",
 }
-_TTS_TRANSLATION_FORMAT_VERSION = "speaker-name-guidance-v1"
+_TTS_TRANSLATION_FORMAT_VERSION = "speaker-name-guidance-v2"
+
+# BanG Dream! bands, stage names, venues, and common live terms that must be
+# rendered in Japanese kana/katakana when synthesizing Japanese speech so that
+# GPT-SoVITS does not pronounce them with English phonetics.
+# Each entry: (canonical_label, jp_speech_reading, aliases_tuple, word_boundary_only)
+_BANDORI_TERM_SPEECH_ENTRIES: tuple[tuple[str, str, tuple[str, ...], bool], ...] = (
+    ("Hello, Happy World!", "ハロー、ハッピーワールド！（简称 ハロハピ）", ("hello, happy world", "hello happy world", "hello,happy,world", "hello happy world!", "hhw", "哈罗哈比", "赫萝哈皮"), False),
+    ("Roselia", "ロゼリア", ("roselia",), False),
+    ("Poppin'Party", "ポッピンパーティ（简称 ポピパ）", ("poppin'party", "poppin’party", "poppin party", "popipa", "ppp"), False),
+    ("Afterglow", "アフターグロウ", ("afterglow",), False),
+    ("Pastel＊Palettes", "パステルパレット（简称 パスパレ）", ("pastel*palettes", "pastel＊palettes", "pastel palettes", "pasupare"), False),
+    ("Morfonica", "モルフォニカ（简称 モニカ）", ("morfonica",), False),
+    ("RAISE A SUILEN", "レイズ・ア・スイレン（简称 ラス）", ("raise a suilen",), False),
+    ("RAS", "ラス（或 レイズ・ア・スイレン）", ("ras",), True),
+    ("MyGO!!!!!", "マイゴ", ("mygo!!!!!", "mygo"), True),
+    ("Ave Mujica", "アヴェ・ムジカ", ("ave mujica", "mujica"), False),
+    ("CRYCHIC", "クライシック", ("crychic",), True),
+    ("sumimi", "すみみ", ("sumimi",), True),
+    ("Glitter*Green", "グリッターグリーン", ("glitter*green", "glitter green"), False),
+    ("CHiSPA", "チスパ", ("chispa",), True),
+    ("BanG Dream!", "バンドリ！", ("bang dream!", "bang dream", "bangdream", "邦邦"), False),
+    ("LAYER", "レイヤ", ("layer",), True),
+    ("LOCK", "ロック", ("lock",), True),
+    ("MASKING", "マスキング", ("masking",), True),
+    ("PAREO", "パレオ", ("pareo",), True),
+    ("CHU²", "チュチュ", ("chu²", "chu2", "chuchu"), False),
+    ("Doloris", "ドロリス", ("doloris",), True),
+    ("Mortis", "モーティス", ("mortis",), True),
+    ("Timoris", "ティモリス", ("timoris",), True),
+    ("Amoris", "アモーリス", ("amoris",), True),
+    ("Oblivionis", "オブリビオニス", ("oblivionis",), True),
+    ("Michelle", "ミッシェル", ("michelle", "米歇尔"), False),
+    ("CiRCLE", "サークル", ("circle",), True),
+    ("RiNG", "リング", ("ring",), True),
+    ("GALAXY", "ギャラクシー", ("galaxy",), True),
+    ("SPACE", "スペース", ("space",), True),
+    ("LIVE", "ライブ", ("live",), True),
+    ("NFO", "エヌエフオー", ("nfo",), True),
+)
+
+_BANDORI_JAPANESE_RULE = (
+    "\n【BanG Dream! 日语语音用语规范】"
+    "译文将直接交给日语语音合成引擎朗读。凡涉及 BanG Dream! 乐队名、舞台艺名、Live House、"
+    "歌曲或英文专有名词，严禁保留英文拼写，必须全部转写为日语假名/片假名读音"
+    "（例如：Hello, Happy World! → ハロー、ハッピーワールド！，Roselia → ロゼリア，"
+    "Poppin'Party → ポッピンパーティ，Afterglow → アフターグロウ，"
+    "Pastel＊Palettes → パステルパレット，Morfonica → モルフォニカ，"
+    "RAISE A SUILEN → レイズ・ア・スイレン，MyGO!!!!! → マイゴ，"
+    "Ave Mujica → アヴェ・ムジカ，BanG Dream! → バンドリ！）。"
+    "其他夹杂的英文词也请按日语习惯写成片假名，避免语音引擎用英语腔调朗读。"
+)
+
+
+def _find_referenced_bandori_terms(text: str) -> list[tuple[str, str]]:
+    if not text:
+        return []
+    lowered = text.lower()
+    matched: list[tuple[str, str]] = []
+    for label, jp_reading, aliases, word_boundary in _BANDORI_TERM_SPEECH_ENTRIES:
+        hit = False
+        for alias in aliases:
+            if word_boundary and alias.isascii():
+                if re.search(rf"(?<![A-Za-z0-9_]){re.escape(alias)}(?![A-Za-z0-9_])", lowered):
+                    hit = True
+                    break
+            elif alias in lowered:
+                hit = True
+                break
+        if hit:
+            matched.append((label, jp_reading))
+    return matched
 
 # A bare Japanese kanji can have a different dictionary reading from a
 # character's name.  Keep the speech spelling here so the translation prompt
@@ -406,6 +883,7 @@ def _build_translation_system_prompt(
     speaker_character: str = "",
 ) -> str:
     referenced = _find_referenced_characters(text)
+    referenced_terms = _find_referenced_bandori_terms(text) if target_language_name == "日语" else []
     speaker_guide = _SPEAKER_NAME_SPEECH_GUIDES.get(
         str(speaker_character or "").strip().lower()
     )
@@ -417,25 +895,40 @@ def _build_translation_system_prompt(
             f"自称或单独名字必须写作「{speaker_guide['speech_spelling']}」，"
             f"不要单独写「{speaker_guide['ambiguous_name']}」。"
         )
+    jp_bandori_rule = _BANDORI_JAPANESE_RULE if target_language_name == "日语" else ""
+
+    appendices: list[str] = []
     if referenced:
-        appendix = "\n\n### BanG Dream! Character Name Reference (CN | JP | EN)\n"
-        appendix += "\n".join(
+        char_lines = "\n".join(
             f"  {cn}  |  {jp}  |  {en_}"
             for cn, (jp, en_) in referenced.items()
         )
+        appendices.append(f"### BanG Dream! Character Name Reference (CN | JP | EN)\n{char_lines}")
+    if referenced_terms:
+        term_lines = "\n".join(
+            f"  {term}  ->  {jp_reading}"
+            for term, jp_reading in referenced_terms
+        )
+        appendices.append(f"### BanG Dream! Term Japanese Speech Reference (MUST use kana)\n{term_lines}")
+
+    if appendices:
+        appendix_block = "\n\n" + "\n\n".join(appendices)
         return (
             f"把用户给出的中文聊天台词翻译成自然{target_language_name}，只输出译文，不要解释。保留语气，不要输出动作标签。"
-            f"翻译人物名称时请参照以下对照表，按目标语言使用对应名称：\n{appendix}"
+            f"翻译人物与作品专有名词时请参照以下对照表，按目标语言使用对应名称：\n{appendix_block}"
+            f"{jp_bandori_rule}"
             f"{speaker_instruction}"
         )
     return (
         f"把用户给出的中文聊天台词翻译成自然{target_language_name}，只输出译文，不要解释。保留语气，不要输出动作标签。"
+        f"{jp_bandori_rule}"
         f"{speaker_instruction}"
     )
 
 
 def strip_tts_action_tags(text: str) -> str:
-    return _ACTION_TAG_RE.sub("", text).strip()
+    cleaned = _ACTION_TAG_RE.sub("", text).strip()
+    return cleaned.replace("〜", "ー").replace("～", "ー")
 
 
 _TTS_SENTENCE_RE = re.compile(r".+?(?:[。！？!?；;]+|$)", re.S)
@@ -529,21 +1022,22 @@ def tts_cache_path(text: str, character: str, config: dict) -> pathlib.Path:
     return cache_dir / f"{digest}.wav"
 
 
-def collect_greeting_tts_lines(greetings: dict) -> list[str]:
+def collect_greeting_tts_lines(greetings: dict, character: str = "", base_dir: pathlib.Path | None = None) -> list[str]:
     """Collect all unique non-empty text lines from a ``greetings.json`` dict.
 
-    The order is ``startup_greeting`` → ``daily_chat``. If no daily-chat pool
+    The order is ``startup_greeting`` → ``repeated_click`` → ``daily_chat``. If no daily-chat pool
     is configured, legacy ``click_responses[].lines`` and ``tiers[].lines``
     are used instead. Duplicates are removed while preserving
     first-occurrence order.
     """
-    return [text for text, _pretranslated in collect_greeting_tts_items(greetings)]
+    return [text for text, _pretranslated in collect_greeting_tts_items(greetings, character, base_dir)]
 
 
-def collect_greeting_tts_items(greetings: dict) -> list[tuple[str, bool]]:
+def collect_greeting_tts_items(greetings: dict, character: str = "", base_dir: pathlib.Path | None = None) -> list[tuple[str, bool]]:
     """Collect ``(text, is_pretranslated)`` items for greeting prewarm."""
     seen: set[str] = set()
     result: list[tuple[str, bool]] = []
+    base_dir = base_dir if base_dir is not None else app_base_dir()
 
     def _add(lines, pretranslated=False):
         for line in lines:
@@ -555,11 +1049,30 @@ def collect_greeting_tts_items(greetings: dict) -> list[tuple[str, bool]]:
                 result.append((text, pretranslated))
 
     # startup_greeting
-    startup = greetings.get("startup_greeting", [])
+    startup = greetings.get("startup_greeting", []) if isinstance(greetings, dict) else []
     if isinstance(startup, list):
-        _add(startup)
+        for line in startup:
+            if isinstance(line, dict):
+                text, spoken = line.get("text", ""), line.get("tts_text")
+            else:
+                text, spoken = str(line), None
+            spoken = spoken or text
+            if spoken and not offline_voice_path(character, "startup_greetings", spoken, base_dir).is_file():
+                _add([(spoken, spoken != text)])
+
+    # repeated_click (from greetings or character-specific defaults)
+    has_explicit_repeated = isinstance(greetings, dict) and bool(
+        greetings.get("repeated_click") or greetings.get("poke")
+    )
+    if has_explicit_repeated or character:
+        for entry in repeated_click_entries(greetings, character):
+            tts = entry.get("tts_text") or entry.get("text", "")
+            if tts and not offline_voice_path(character, "repeated_clicks", tts, base_dir).is_file():
+                is_pre = bool(entry.get("tts_text") and entry.get("tts_text") != entry.get("text"))
+                _add([(tts, is_pre)])
+
     # daily_chat replaces legacy double-click lines, but not startup greetings
-    daily_entries = complete_daily_chat_entries(greetings)
+    daily_entries = daily_chat_entries(greetings)
     if daily_entries:
         _add(
             (
@@ -597,7 +1110,8 @@ def _tts_translate_to_selected_language(
     target_language: str,
     speaker_character: str = "",
 ) -> str:
-    api_url = str(config.get("llm_aux_api_url", "") or "").strip() or str(config.get("llm_api_url", "") or "").strip()
+    aux_url = str(config.get("llm_aux_api_url", "") or "").strip()
+    api_url = aux_url or str(config.get("llm_api_url", "") or "").strip()
     api_key = str(config.get("llm_aux_api_key", "") or "").strip() or str(config.get("llm_api_key", "") or "").strip()
     model_id = str(config.get("llm_aux_model_id", "") or "").strip() or str(config.get("llm_model_id", "") or "").strip()
     if not api_url or not api_key or not model_id:
@@ -618,17 +1132,41 @@ def _tts_translate_to_selected_language(
         "stream": False,
     }
     enable_thinking = _aux_model_enable_thinking(config)
-    if enable_thinking is not None:
+    is_responses = urlsplit(api_url).path.rstrip("/").endswith("/responses") or (
+        not aux_url and config.get("llm_api_mode") == "responses"
+    )
+    if is_responses:
+        from llm_manager import (
+            _apply_responses_thinking_options,
+            _extract_response_output_text,
+            _messages_to_responses_input,
+            _responses_api_url,
+        )
+
+        instructions, input_items = _messages_to_responses_input(body.pop("messages"))
+        body.update(instructions=instructions, input=input_items)
+        _apply_responses_thinking_options(body, enable_thinking)
+        api_url = _responses_api_url(api_url)
+    elif enable_thinking is not None:
         body["enable_thinking"] = enable_thinking
         body["thinking"] = {"type": "enabled" if enable_thinking else "disabled"}
-    req = urllib.request.Request(
-        api_url,
-        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
+    if config.get("tts_gpt_sovits_runtime") and api_url.rstrip("/") in {
+        "https://api.openai.com/v1/responses", "https://api.openai.com/v1/chat/completions",
+    }:
+        from realtime_story_tts import post_openai_story_json
+
+        data = post_openai_story_json(api_url, api_key, body, QThread.currentThread().isInterruptionRequested)
+    else:
+        req = urllib.request.Request(
+            api_url,
+            data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    if is_responses:
+        return _extract_response_output_text(data).strip()
     return data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
 
 
@@ -701,21 +1239,28 @@ class TTSRequestWorker(QThread):
                 )
                 if translated:
                     text = translated
-            audio_bytes = self._generate_audio_bytes(text, text_language, selected_language)
-            if audio_bytes:
-                self.audio_ready.emit(self.sequence, self.generation, audio_bytes, "wav")
+            self._synthesize_and_emit(text, text_language, selected_language)
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")
             self.error.emit(f"TTS HTTP {exc.code}: {body[:240]}")
         except Exception as exc:
             self.error.emit(f"TTS: {exc}")
 
-    def _generate_audio_bytes(self, text: str, text_language: str,
-                              selected_language: str) -> bytes | None:
-        """Prepare payload, switch weights, POST /tts — atomic under ``_tts_lock``."""
+    def _streaming_enabled(self) -> bool:
+        return bool(self._config.get("tts_streaming", True))
+
+    def _build_payload(
+        self,
+        text: str,
+        text_language: str,
+        selected_language: str,
+        *,
+        streaming: bool,
+    ) -> tuple[dict, dict[str, str]]:
         profile = effective_tts_voice_profile(self._character, self._config)
         prompt_text = self._reference_prompt_text(selected_language)
         paths = _gpt_sovits_model_paths(self._reference_character(), self._config)
+        split_method, batch_size = _select_gpt_sovits_split_params(text, streaming=streaming)
         payload = _gpt_sovits_payload(
             text=text,
             text_language=text_language,
@@ -726,14 +1271,89 @@ class TTSRequestWorker(QThread):
             top_k=profile["top_k"],
             top_p=profile["top_p"],
             repetition_penalty=profile["repetition_penalty"],
+            text_split_method=split_method,
+            batch_size=batch_size,
+            streaming_mode=streaming,
         )
-        with _tts_lock:
-            self._ensure_gpt_sovits_weights(paths)
-        response = requests.post(self._tts_url() + "tts", json=payload, stream=False, timeout=300)
-        if response.status_code != 200:
-            self.error.emit(f"TTS HTTP {response.status_code}: {self._response_error(response)}")
-            return None
-        return response.content if response.content else None
+        return payload, paths
+
+    def _synthesize_and_emit(self, text: str, text_language: str, selected_language: str):
+        streaming = self._streaming_enabled()
+        if not streaming:
+            audio_bytes = self._generate_audio_bytes(text, text_language, selected_language)
+            if audio_bytes:
+                self.audio_ready.emit(self.sequence, self.generation, audio_bytes, "wav")
+            return
+
+        pieces = split_tts_segments(text, max_chars=55) if len(text) > 60 else [text]
+        if not pieces:
+            return
+        url = self._tts_url()
+        with _interactive_tts_scope(url):
+            for piece in pieces:
+                if self.isInterruptionRequested():
+                    return
+                payload, paths = self._build_payload(
+                    piece, text_language, selected_language, streaming=True
+                )
+                with _tts_lock, _cross_process_tts_lock(url, self.isInterruptionRequested):
+                    self._ensure_gpt_sovits_weights(paths)
+                    session = _get_tts_session(url)
+                    response = session.post(url + "tts", json=payload, stream=True, timeout=300)
+                    try:
+                        if response.status_code != 200:
+                            self.error.emit(
+                                f"TTS HTTP {response.status_code}: {self._response_error(response)}"
+                            )
+                            return
+                        if callable(getattr(response, "iter_content", None)):
+                            for wav_chunk in _iter_wav_stream_chunks(
+                                response, self.isInterruptionRequested
+                            ):
+                                if wav_chunk:
+                                    self.audio_ready.emit(
+                                        self.sequence, self.generation, wav_chunk, "wav"
+                                    )
+                        else:
+                            audio_bytes = response.content if response.content else None
+                            if audio_bytes:
+                                self.audio_ready.emit(
+                                    self.sequence, self.generation, audio_bytes, "wav"
+                                )
+                    finally:
+                        close = getattr(response, "close", None)
+                        if callable(close):
+                            close()
+
+    def _generate_audio_bytes(self, text: str, text_language: str,
+                              selected_language: str, *, interactive: bool = True) -> bytes | None:
+        """Prepare payload, switch weights, POST /tts — serialized in-process & cross-process."""
+        payload, paths = self._build_payload(
+            text, text_language, selected_language, streaming=False
+        )
+        url = self._tts_url()
+
+        def _execute() -> bytes | None:
+            with _tts_lock, _cross_process_tts_lock(url, self.isInterruptionRequested):
+                self._ensure_gpt_sovits_weights(paths)
+                session = _get_tts_session(url)
+                response = session.post(url + "tts", json=payload, stream=False, timeout=300)
+                try:
+                    if response.status_code != 200:
+                        self.error.emit(
+                            f"TTS HTTP {response.status_code}: {self._response_error(response)}"
+                        )
+                        return None
+                    return response.content if response.content else None
+                finally:
+                    close = getattr(response, "close", None)
+                    if callable(close):
+                        close()
+
+        if interactive:
+            with _interactive_tts_scope(url):
+                return _execute()
+        return _execute()
 
     def _response_error(self, response) -> str:
         try:
@@ -748,18 +1368,39 @@ class TTSRequestWorker(QThread):
             pass
         return response.text[:240]
 
+    def _current_server_weights(self, url: str) -> tuple[str, str]:
+        state_gpt, state_sovits, state_ts = _read_tts_state_weights(url)
+        local_yaml = _read_local_runtime_weights(self._config, url)
+        if local_yaml is not None:
+            yaml_gpt, yaml_sovits, yaml_mtime = local_yaml
+            if yaml_mtime >= state_ts or not (state_gpt and state_sovits):
+                return yaml_gpt, yaml_sovits
+        if state_gpt and state_sovits:
+            return state_gpt, state_sovits
+        if _current_gpt_sovits_weights is not None:
+            return _current_gpt_sovits_weights
+        return "", ""
+
     def _ensure_gpt_sovits_weights(self, paths: dict[str, str]):
         global _current_gpt_sovits_weights
-        target = (paths["gpt"], paths["sovits"])
-        if _current_gpt_sovits_weights == target:
-            return
-        self._set_gpt_sovits_weight("set_gpt_weights", paths["gpt"])
-        self._set_gpt_sovits_weight("set_sovits_weights", paths["sovits"])
-        _current_gpt_sovits_weights = target
+        url = self._tts_url()
+        target_gpt = _norm_weight_path(paths["gpt"])
+        target_sovits = _norm_weight_path(paths["sovits"])
+        cur_gpt, cur_sovits = self._current_server_weights(url)
+        if cur_gpt != target_gpt:
+            self._set_gpt_sovits_weight("set_gpt_weights", paths["gpt"])
+            cur_gpt = target_gpt
+        if cur_sovits != target_sovits:
+            self._set_gpt_sovits_weight("set_sovits_weights", paths["sovits"])
+            cur_sovits = target_sovits
+        _current_gpt_sovits_weights = (cur_gpt, cur_sovits)
+        _write_tts_state_weights(url, cur_gpt, cur_sovits)
 
     def _set_gpt_sovits_weight(self, endpoint: str, path: str):
-        response = requests.get(
-            self._tts_url() + endpoint,
+        url = self._tts_url()
+        session = _get_tts_session(url)
+        response = session.get(
+            url + endpoint,
             params={"weights_path": path},
             timeout=60,
         )
@@ -897,6 +1538,12 @@ class CachedTTSRequestWorker(TTSRequestWorker):
         self._play_when_ready = play_when_ready
 
     def run(self):
+        audio = self.load_or_generate_audio()
+        if audio and self._play_when_ready:
+            self.audio_ready.emit(self.sequence, self.generation, audio, "wav")
+
+    def load_or_generate_audio(self) -> bytes | None:
+        """Return cached or newly synthesized audio in the calling worker thread."""
         cache_path = tts_cache_path(self._text, self._character, self._config)
 
         # Cache hit — return cached wav bytes (single stat instead of
@@ -907,10 +1554,7 @@ class CachedTTSRequestWorker(TTSRequestWorker):
             cache_hit = False
         if cache_hit:
             try:
-                audio_bytes = cache_path.read_bytes()
-                if self._play_when_ready:
-                    self.audio_ready.emit(self.sequence, self.generation, audio_bytes, "wav")
-                return
+                return cache_path.read_bytes()
             except Exception as exc:
                 # Corrupt cache — fall through to re-generate
                 print(f"[tts] cache read failed for {cache_path.name}: {exc}")
@@ -929,7 +1573,19 @@ class CachedTTSRequestWorker(TTSRequestWorker):
                 if translated:
                     text = translated
 
-            audio_bytes = self._generate_audio_bytes(text, text_language, selected_language)
+            if not self._play_when_ready:
+                wait_deadline = time.monotonic() + 5.0
+                while is_interactive_tts_busy(self._config) and time.monotonic() < wait_deadline:
+                    if self.isInterruptionRequested():
+                        return None
+                    time.sleep(0.1)
+
+            audio_bytes = self._generate_audio_bytes(
+                text,
+                text_language,
+                selected_language,
+                interactive=self._play_when_ready,
+            )
             if not audio_bytes:
                 return
 
@@ -946,8 +1602,7 @@ class CachedTTSRequestWorker(TTSRequestWorker):
             except Exception as exc:
                 print(f"[tts] cache write failed for {cache_path.name}: {exc}")
 
-            if self._play_when_ready:
-                self.audio_ready.emit(self.sequence, self.generation, audio_bytes, "wav")
+            return audio_bytes
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")
             self.error.emit(f"TTS HTTP {exc.code}: {body[:240]}")
@@ -1079,28 +1734,29 @@ class TTSPlayer(QObject):
             except queue.Empty:
                 break
 
-    def enqueue(self, audio: bytes, media_type: str = "wav"):
+    def enqueue(self, audio: bytes, media_type: str = "wav") -> bool:
         if not audio:
-            return
+            return False
         del media_type
         try:
             data, sample_rate = sf.read(io.BytesIO(audio), dtype="float32")
         except Exception as exc:
             self.error.emit(f"TTS audio decode failed: {exc}")
-            return
+            return False
         if data.size == 0:
-            return
+            return False
         if data.ndim == 1:
             data = data.reshape(-1, 1)
         if self._stream is not None and sample_rate != self._sample_rate:
             self.stop()
         self._ensure_stream(sample_rate, data.shape[1])
         if self._stream is None:
-            return
+            return False
         self._queue.put_nowait(data)
         self._playback_active = True
         if not self._level_timer.isActive():
             self._level_timer.start()
+        return True
 
     def is_idle(self) -> bool:
         return (

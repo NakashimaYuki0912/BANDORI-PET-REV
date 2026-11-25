@@ -245,5 +245,31 @@
       "tts_text": "きみも今日のセッションに入ってよ！　楽器がなくても、手拍子も、うなずくのも、笑うのも――全部、音だから！",
       "motion": "natural01"
     }
+  ],
+  "repeated_click": [
+    {
+      "text": "哇啊！不要一直戳我啦，好痒好痒~！[smile01]",
+      "tts_text": "わあっ！何回もつつかないでよ、くすぐったいよ〜！",
+      "motion": "smile01",
+      "expression": "smile"
+    },
+    {
+      "text": "诶嘿嘿，再点香澄的话，香澄也要戳回去咯！[smile02]",
+      "tts_text": "えへへ、これ以上つついたら、香澄もやり返しちゃうよ！",
+      "motion": "smile02",
+      "expression": "smile"
+    },
+    {
+      "text": "等等等等！香澄的心脏都要被戳得扑通扑通跳了！[surprised01]",
+      "tts_text": "待って待って！胸がドキドキしすぎちゃうよ！",
+      "motion": "surprised01",
+      "expression": "surprised"
+    },
+    {
+      "text": "唔……不要一直点我啦！[shame01]",
+      "tts_text": "うぅ……もう、ずっとつつかないでよ〜！",
+      "motion": "shame01",
+      "expression": "shame"
+    }
   ]
 }

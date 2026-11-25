@@ -4866,6 +4866,10 @@ class ChatWindow(QWidget):
     def _tts_config_snapshot(self) -> dict:
         keys = (
             "tts_api_url",
+            "tts_gpt_sovits_root",
+            "tts_gpt_sovits_remote_root",
+            "tts_gpt_sovits_runtime",
+            "tts_custom_weights",
             "tts_language",
             "tts_reference_character",
             "tts_streaming",
@@ -4876,6 +4880,7 @@ class ChatWindow(QWidget):
             "llm_api_url",
             "llm_api_key",
             "llm_model_id",
+            "llm_api_mode",
             "llm_aux_api_url",
             "llm_aux_api_key",
             "llm_aux_model_id",

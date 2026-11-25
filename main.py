@@ -1,6 +1,7 @@
 import sys
 import os
 import json
+import shutil
 import subprocess
 import threading
 
@@ -135,6 +136,8 @@ def main():
         menu = apply_compact_tray_menu_style(QMenu())
         settings_action = menu.addAction(_tr("MainTray.settings"))
         settings_action.triggered.connect(lambda: launch_settings_process(show_launch=False))
+        story_action = menu.addAction(_tr("MainTray.trigger_story", "讲个微故事 / 主动搭话"))
+        story_action.triggered.connect(lambda: broadcast_ipc_line("TRIGGER_STORY"))
         reset_pos_action = menu.addAction(_tr("MainTray.reset_position"))
         reset_pos_action.triggered.connect(lambda: broadcast_ipc_line("RESET_POSITION"))
         exit_action = menu.addAction(_tr("MainTray.exit"))
@@ -144,7 +147,7 @@ def main():
         tray_icon.show()
 
     def _start_ssh_tunnel_sync():
-        if not bool(cfg.get("tts_enabled", False)):
+        if not bool(cfg.get("tts_enabled", False)) or cfg.get("tts_gpt_sovits_runtime"):
             return
         api_url = str(cfg.get("tts_api_url", "") or "").strip().lower()
         if api_url and "127.0.0.1" not in api_url and "localhost" not in api_url:
@@ -252,6 +255,10 @@ def main():
             return
         if _tts_port_open():
             return
+        runtime = str(cfg.get("tts_gpt_sovits_runtime", "") or "").strip()
+        if runtime:
+            start_local_gpt_sovits(runtime)
+            return
         python_exe = os.path.join(TTS_BACKEND_DIR, "build_venv", "python.exe")
         if not os.path.isfile(python_exe):
             print(f"TTS backend python not found: {python_exe}")
@@ -270,6 +277,30 @@ def main():
             tts_process_ref["process"] = proc
         except OSError as exc:
             print(f"Failed to start TTS backend: {exc}")
+
+    def start_local_gpt_sovits(runtime: str):
+        python = os.path.join(runtime, "runtime", "python.exe")
+        server = os.path.join(runtime, "api_v2.py")
+        local_yaml = os.path.join(BASE_DIR, "server", "tts_infer_local.yaml")
+        runtime_yaml = os.path.join(runtime, "GPT_SoVITS", "configs", "bandoripet_local.yaml")
+        if not all(os.path.isfile(path) for path in (python, server, local_yaml)):
+            log_error("Local GPT-SoVITS runtime or inference configuration is missing.")
+            return
+        env = os.environ.copy()
+        env["PATH"] = os.pathsep.join((
+            runtime, os.path.dirname(python), os.path.join(runtime, "runtime", "Scripts"),
+            env.get("PATH", ""),
+        ))
+        try:
+            shutil.copyfile(local_yaml, runtime_yaml)
+            with open(os.path.join(runtime, "bandoripet-gpt-sovits.log"), "a", encoding="utf-8") as log:
+                tts_process_ref["process"] = subprocess.Popen(
+                    [python, "-u", server, "-a", "127.0.0.1", "-p", "9880", "-c", runtime_yaml],
+                    cwd=runtime, env=env, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                    stdout=log, stderr=subprocess.STDOUT,
+                )
+        except OSError as exc:
+            log_error(f"Local GPT-SoVITS startup failed: {exc}")
 
     def stop_tts_backend():
         proc = tts_process_ref.get("process")
@@ -437,6 +468,11 @@ def main():
 
     def handle_ipc_line(line: str):
         if line.startswith(("ACTION\t", "LIP\t", "AI_EVENT\t", "CHAT_EVENT\t", "SCALE_PREVIEW\t", "TODO\t")):
+            broadcast_ipc_line(line)
+        elif line in ("FOCUS_MODE\t0", "FOCUS_MODE\t1"):
+            cfg.load()
+            cfg.set("focus_mode", line.endswith("\t1"))
+            cfg.save()
             broadcast_ipc_line(line)
         elif line.startswith("MODEL\t") or line.startswith("SETTINGS\t") or line == "LAUNCH":
             handle_settings_line(line)
@@ -929,7 +965,7 @@ def main():
     init_ipc_server()
     init_ai_status_server()
     init_chat_integration_server()
-    start_tts_services()  # tunnel first, then local fallback, off the UI thread
+    start_tts_services()  # start the configured backend off the UI thread
     # Pre-warming disabled: always launch fresh for reliable direct page navigation
     # _QTimer.singleShot(800, prewarm_settings_process)
 

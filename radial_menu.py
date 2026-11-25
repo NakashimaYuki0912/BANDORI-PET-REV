@@ -1581,7 +1581,12 @@ class RadialListRow(QWidget):
         kx, ky = int(x + w / 2 - 1), int(y + h / 2 + 4)
         p.drawEllipse(kx, ky, 2, 2)
 
-    _ICON_DRAWERS = ("chat", "costume", "weather", "lock")
+    @staticmethod
+    def _draw_focus_icon(p, x, y, w, h, color):
+        p.drawEllipse(QRectF(x + 3, y + 3, w - 6, h - 6))
+        p.drawEllipse(QRectF(x + 7, y + 7, w - 14, h - 14))
+
+    _ICON_DRAWERS = ("chat", "costume", "weather", "lock", "focus")
 
     def __init__(self, label: str, color: QColor, icon_kind: str = "", subtitle: str = "",
                  enabled: bool = True, parent=None):

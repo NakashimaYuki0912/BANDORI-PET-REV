@@ -2,6 +2,7 @@ import ctypes
 import ctypes.util
 import json
 import os
+from pathlib import Path
 import random
 import re
 import sys
@@ -10,7 +11,7 @@ import time
 if os.name == "nt":
     import ctypes.wintypes
 
-from PySide6.QtCore import Qt, QPoint, QSize, QTimer, QPropertyAnimation, QEasingCurve, QProcess, QEvent, QThread, Signal
+from PySide6.QtCore import Qt, QPoint, QSize, QTimer, QPropertyAnimation, QEasingCurve, QProcess, QEvent, QThread, Signal, Slot
 from PySide6.QtGui import QColor, QIcon, QCursor, QGuiApplication, QMoveEvent, QResizeEvent, QPainter, QPen, QBrush, QFont, QFontMetrics, QLinearGradient, QPolygon
 from PySide6.QtNetwork import QLocalSocket
 from PySide6.QtWidgets import (
@@ -48,15 +49,18 @@ from media_session_manager import (
 _tts_available = False
 _TTSPlayer = None
 _CachedTTSRequestWorker = None
+_tts_cache_path = None
 _collect_greeting_tts_lines = None
 _collect_greeting_tts_items = None
 _strip_tts_action_tags = None
+_is_interactive_tts_busy = None
 try:
     from tts_manager import (
         TTSPlayer as _TTSPlayer,
         CachedTTSRequestWorker as _CachedTTSRequestWorker,
         collect_greeting_tts_lines as _collect_greeting_tts_lines,
         collect_greeting_tts_items as _collect_greeting_tts_items,
+        is_interactive_tts_busy as _is_interactive_tts_busy,
         strip_tts_action_tags as _strip_tts_action_tags,
         tts_cache_path as _tts_cache_path,
     )
@@ -68,6 +72,23 @@ try:
     from todo_manager import TodoSupervisionManager
 except ImportError:
     TodoSupervisionManager = None
+
+try:
+    from repeated_click import (
+        DEFAULT_POKE_COOLDOWN,
+        DEFAULT_POKE_INTERVAL,
+        DEFAULT_POKE_THRESHOLD,
+        find_repeated_click_audio,
+        offline_voice_path,
+        repeated_click_entries,
+    )
+except ImportError:
+    DEFAULT_POKE_COOLDOWN = 3.5
+    DEFAULT_POKE_INTERVAL = 1.8
+    DEFAULT_POKE_THRESHOLD = 5
+    find_repeated_click_audio = lambda *args, **kwargs: None
+    offline_voice_path = None
+    repeated_click_entries = lambda *args, **kwargs: []
 
 from win32_constants import (
     DWMWA_EXTENDED_FRAME_BOUNDS,
@@ -307,6 +328,7 @@ class SpeechBubble(QWidget):
 
     character_typed = Signal(str)
     typing_finished = Signal()
+    bubble_hidden = Signal()
 
     def __init__(self):
         super().__init__(None)
@@ -432,6 +454,13 @@ class SpeechBubble(QWidget):
             self._visible_chars = len(text)
             self._hide_timer.start(display_ms)
             self.typing_finished.emit()
+
+    def hide(self):
+        self._hide_timer.stop()
+        self._typewriter_timer.stop()
+        self._fade_anim.stop()
+        super().hide()
+        self.bubble_hidden.emit()
 
     def _begin_fade(self):
         self._fade_anim.setStartValue(1.0)
@@ -716,6 +745,7 @@ class PetWindow(QWidget):
         self._tray_icon = None
         self._enable_tray = enable_tray
         self._cfg = config_manager
+        self._focus_mode = bool(self._cfg and self._cfg.get("focus_mode", False))
         if self._cfg:
             self._live2d_quality = normalize_live2d_quality(
                 self._cfg.get("live2d_quality", "balanced")
@@ -749,13 +779,18 @@ class PetWindow(QWidget):
         self._speech_bubble = SpeechBubble()
         self._speech_bubble.character_typed.connect(self._on_bubble_character_typed)
         self._speech_bubble.typing_finished.connect(self._on_bubble_typing_finished)
+        self._active_story_queue: list[dict] = []
         self._ambient_chat_manager = AmbientChatManager(self._cfg, parent=self)
         self._ambient_chat_manager.entry_prefetched.connect(self._on_ambient_entry_prefetched)
-        self._last_ambient_proactive_spoken_at = time.monotonic()
+        self._ambient_chat_manager.manual_story_ready.connect(self._on_manual_story_ready)
+        self._ambient_chat_manager.manual_story_status.connect(self._on_manual_story_status)
         self._ambient_proactive_cooldown_seconds = random.uniform(900.0, 1500.0)
+        # Allow initial proactive thought ~25s after startup once idle, rather than
+        # enforcing 15-25 min silence from the first second of launching.
+        self._last_ambient_proactive_spoken_at = time.monotonic() - self._ambient_proactive_cooldown_seconds + 25.0
         self._last_seen_media_title = ""
         self._ambient_proactive_timer = QTimer(self)
-        self._ambient_proactive_timer.setInterval(45000)
+        self._ambient_proactive_timer.setInterval(15000)
         self._ambient_proactive_timer.timeout.connect(self._check_ambient_proactive_thought)
         self._ambient_proactive_timer.start()
         self._pixel_mode = self._configured_pet_mode() == "pixel"
@@ -767,12 +802,15 @@ class PetWindow(QWidget):
         self._expression_guard_token = 0
         self._custom_action_params = set()
         self._custom_action_param_token = 0
-        self._is_startup = True
+        self._action_chain_token = 0
+        self._greet_on_model_load = True
         # TTS integration state
         self._tts_player = None
         self._tts_generation = 0
         self._tts_prewarm_workers: list = []
         self._active_speech_worker = None
+        self._ambient_speech_generation: int | None = None
+        self._pending_ambient_entry: dict | None = None
         self._media_overlay = None
         self._media_poll_worker = None
         self._media_command_worker = None
@@ -793,6 +831,14 @@ class PetWindow(QWidget):
         self._cursor_near_live2d_reacted = False
         self._daily_context_idle_seen = set()
         self._mouse_passthrough = False
+        # Repeated click (poke) interaction state
+        self._poke_click_count: int = 0
+        self._last_poke_click_time: float = 0.0
+        self._last_poke_response_time: float = 0.0
+        self._last_poke_entry_index: int = -1
+        self._poke_threshold: int = DEFAULT_POKE_THRESHOLD
+        self._poke_interval: float = DEFAULT_POKE_INTERVAL
+        self._poke_cooldown: float = DEFAULT_POKE_COOLDOWN
         # QOpenGLWidget alpha reads are not reliable during WM_NCHITTEST on
         # Windows 11; keep hit sampling on the Qt timer path.
         self._use_native_hit_test_passthrough = False
@@ -1322,6 +1368,9 @@ class PetWindow(QWidget):
         capsule_action = menu.addAction(_tr("PetWindow.tray_quick_chat", "快捷对话胶囊"))
         capsule_action.triggered.connect(self.toggle_compact_capsule)
 
+        story_action = menu.addAction(_tr("PetWindow.tray_trigger_story", "讲个微故事 / 主动搭话"))
+        story_action.triggered.connect(self._force_trigger_ambient_story)
+
         settings_action = menu.addAction(_tr("PetWindow.tray_settings"))
         settings_action.triggered.connect(self._open_settings)
 
@@ -1409,6 +1458,11 @@ class PetWindow(QWidget):
             return
         self._note_user_interaction()
         self._close_chat_process()
+        self._tts_generation += 1
+        if character != self._current_char:
+            self._greet_on_model_load = True
+            if self._tts_player is not None:
+                self._tts_player.stop()
         self._current_char = character
         self._current_costume = costume
         if self._todo_manager is not None:
@@ -1420,14 +1474,8 @@ class PetWindow(QWidget):
         self._update_tooltip()
         self._sync_compact_ai_window(allow_create=True)
         if self._compact_ai_window is not None:
-            if "compact_ai_dialog_mode" in data:
-                self._compact_ai_window.set_dialog_mode(data["compact_ai_dialog_mode"])
             self._compact_ai_window.refresh_theme()
         self._save_config()
-        # Bump TTS generation so in-flight workers are ignored
-        self._tts_generation += 1
-        # Prewarm TTS cache for the new character (serial, non-blocking)
-        QTimer.singleShot(2000, self._prewarm_greetings_cache)
 
     def _on_live2d_model_loaded(self):
         self._motion_guard_token += 1
@@ -1437,30 +1485,56 @@ class PetWindow(QWidget):
         self._cursor_near_live2d_reacted = False
         QTimer.singleShot(120, lambda t=self._motion_guard_token: self._restore_default_motion(t, force_clear=False))
         QTimer.singleShot(0, lambda: self._sync_compact_ai_window(allow_create=True))
-        if self._is_startup:
-            self._is_startup = False
-            QTimer.singleShot(1500, self._show_startup_greeting)
+        if self._greet_on_model_load:
+            self._greet_on_model_load = False
+            QTimer.singleShot(1500, lambda generation=self._tts_generation: self._show_startup_greeting(generation))
         # Prewarm TTS cache for greeting lines (non-blocking)
         QTimer.singleShot(3000, self._prewarm_greetings_cache)
 
-    def _show_startup_greeting(self):
-        greetings = self._load_greetings()
-        startup_lines = greetings.get("startup_greeting", [])
-        if not startup_lines:
+    def _show_startup_greeting(self, generation: int):
+        if generation != self._tts_generation or getattr(self, "_focus_mode", False):
             return
-        line = random.choice(startup_lines)
-        if isinstance(line, dict):
-            text = line.get("text", "")
-            tts_text = line.get("tts_text", text)
-        else:
-            text = str(line)
-            tts_text = None
+        choices = []
+        for line in self._load_greetings().get("startup_greeting", []):
+            if isinstance(line, dict):
+                text, tts_text = line.get("text", ""), line.get("tts_text")
+            else:
+                text, tts_text = str(line), None
+            if text:
+                choices.append((text, tts_text))
+        if not choices:
+            return
+
+        if offline_voice_path:
+            direct = [
+                (text, path) for text, tts_text in choices
+                if (path := offline_voice_path(self._current_char, "startup_greetings", tts_text or text)).is_file()
+            ]
+            if direct:
+                text, path = random.choice(direct)
+                if self._play_direct_audio(path):
+                    self._show_pet_bubble(text, 6000)
+                    self._ambient_speech_generation = self._tts_generation
+                    return
+        cached = []
+        if self._tts_enabled() and _tts_cache_path:
+            for text, tts_text in choices:
+                spoken, config = self._pet_tts_request(text, tts_text)
+                try:
+                    if spoken and _tts_cache_path(spoken, self._current_char, config).stat().st_size > 44:
+                        cached.append((text, tts_text))
+                except (OSError, ValueError):
+                    continue
+        text, tts_text = random.choice(cached or choices)
         self._show_pet_bubble(text, 6000)
         self._speak_pet_text(text, tts_text)
+        if generation != self._tts_generation:
+            self._ambient_speech_generation = self._tts_generation
 
     def _note_user_interaction(self):
         self._last_user_interaction_at = time.monotonic()
         self._last_context_idle_action_at = self._last_user_interaction_at
+        self._clear_active_story()
 
     def _tick_context_idle_behavior(self):
         if not self._live2d_idle_actions_enabled or self._pixel_mode or not self.isVisible():
@@ -2515,7 +2589,23 @@ class PetWindow(QWidget):
             return
         if self._pixel_mode or x is None or y is None:
             return
+
+        now = time.monotonic()
+        if now - self._last_poke_click_time <= self._poke_interval:
+            self._poke_click_count += 1
+        else:
+            self._poke_click_count = 1
+        self._last_poke_click_time = now
+
+        # Single click motion
         self._trigger_click_motion(float(x), float(y), area_name)
+
+        # Repeated clicks trigger poke dialogue & audio
+        if self._poke_click_count >= self._poke_threshold:
+            if now - self._last_poke_response_time >= self._poke_cooldown:
+                self._trigger_repeated_click_response()
+                self._last_poke_response_time = now
+            self._poke_click_count = 0
 
     def _pet_bubble_anchor(self) -> QPoint:
         """统一的桌宠头顶锚点，优先基于 Live2D 可见模型区域。
@@ -2546,31 +2636,65 @@ class PetWindow(QWidget):
         return self._live2d_widget.mapToGlobal(QPoint(round(local_x), round(local_y)))
 
     def _on_double_click(self, x: float, y: float):
-        self._note_user_interaction()
-        greetings = self._load_greetings()
-        if not greetings:
-            return
-        anchor = self._pet_bubble_anchor()
+        # Double-click uses the same action handling as a normal click.
+        area_name = self._live2d_widget.hit_area_name_at(x, y) if self._live2d_widget else ""
+        self._on_click(x, y, area_name)
 
-        # Try zero-latency context-aware ambient entry first
-        dynamic_entry = self._ambient_chat_manager.pop_ambient_entry(self._current_char)
-        if dynamic_entry is not None:
-            entry = dynamic_entry
-            text = entry["text"]
-            motion = entry.get("motion", "")
-            expression = entry.get("expression", "")
+    def _trigger_repeated_click_response(self):
+        """Trigger reaction dialogue, Live2D animation and voice when clicked repeatedly."""
+        greetings = self._load_greetings()
+        entries = repeated_click_entries(greetings, self._current_char)
+        if not entries:
+            return
+
+        # Pick entry, avoiding consecutive duplicates if multiple options exist
+        if len(entries) > 1 and 0 <= self._last_poke_entry_index < len(entries):
+            candidates = [i for i in range(len(entries)) if i != self._last_poke_entry_index]
+            idx = random.choice(candidates)
         else:
-            daily_entries = complete_daily_chat_entries(greetings)
-            if not daily_entries:
-                return
-            entry = random.choice(daily_entries)
-            text = entry["text"]
-            motion = entry["motion"]
-            expression = entry["expression"]
+            idx = random.randrange(len(entries))
+        self._last_poke_entry_index = idx
+
+        entry = entries[idx]
+        display_text = entry["display_text"]
+        tts_text = entry.get("tts_text") or display_text
+        motion = entry.get("motion", "")
+        expression = entry.get("expression", "")
+
+        # Live2D motion & expression
         if motion or expression:
             self._start_click_motion(motion, expression)
-        self._speech_bubble.show_text(text, anchor)
-        self._speak_pet_text(text, entry.get("tts_text", text))
+        else:
+            self._start_click_motion("angry01", "angry")
+
+        # Speech bubble
+        anchor = self._pet_bubble_anchor()
+        self._speech_bubble.show_text(display_text, anchor, 4500)
+
+        # Voice: direct audio file takes precedence, otherwise synthesize/cached TTS
+        audio_file = find_repeated_click_audio(entry, self._current_char)
+        played = False
+        if audio_file:
+            played = self._play_direct_audio(audio_file)
+        if not played:
+            self._speak_pet_text(display_text, tts_text)
+
+    def _play_direct_audio(self, audio_path: Path) -> bool:
+        """Play a local audio file directly via TTSPlayer, with lip sync."""
+        try:
+            audio_bytes = audio_path.read_bytes()
+            self._ensure_tts_player()
+            if self._tts_player is not None:
+                self._tts_player.stop()
+                self._tts_generation += 1
+                self._ambient_speech_generation = None
+                self._pending_ambient_entry = None
+                suffix = audio_path.suffix.lstrip(".").lower() or "wav"
+                print(f"[repeated_click] playing audio: {audio_path.name}")
+                return self._tts_player.enqueue(audio_bytes, suffix)
+        except Exception as exc:
+            print(f"[repeated_click] direct audio play failed: {exc}")
+        return False
 
     def _reset_greet_count(self):
         self._greet_count = 0
@@ -2827,6 +2951,11 @@ class PetWindow(QWidget):
             subtitle=_tr("PetWindow.radial_weather_hint", "查看今日天气"),
             on_click=self._on_radial_weather,
         )
+        self._focus_mode_row = radial_menu.add_row_item(
+            "", QColor(125, 167, 205),
+            icon_kind="focus",
+            on_click=self._toggle_focus_mode,
+        )
         self._lock_row = radial_menu.add_row_item(
             _tr("PetWindow.radial_lock", "锁定位置"), QColor(160, 160, 180),
             icon_kind="lock",
@@ -2849,6 +2978,7 @@ class PetWindow(QWidget):
             return
         self._radial_menu.set_animation_fps(self._fps)
         self._radial_menu.set_locked(self._live2d_widget._drag_locked)
+        self._refresh_focus_mode_row()
         if hasattr(self, "_lock_row") and self._lock_row is not None:
             if self._live2d_widget._drag_locked:
                 self._lock_row.set_label(_tr("PetWindow.radial_unlock", "解锁位置"))
@@ -2869,7 +2999,46 @@ class PetWindow(QWidget):
         self._note_user_interaction()
         self.toggle_compact_capsule()
 
+    def _refresh_focus_mode_row(self):
+        if self._radial_menu is None:
+            return
+        if self._focus_mode:
+            self._focus_mode_row.set_label(_tr("PetWindow.mode_focus", "专注模式"))
+            self._focus_mode_row.set_subtitle(_tr("PetWindow.switch_to_leisure", "点击切换到休闲"))
+        else:
+            self._focus_mode_row.set_label(_tr("PetWindow.mode_leisure", "休闲模式"))
+            self._focus_mode_row.set_subtitle(_tr("PetWindow.switch_to_focus", "点击切换到专注"))
+
+    def _toggle_focus_mode(self):
+        enabled = not self._focus_mode
+        self._apply_focus_mode(enabled)
+        if self._ipc_socket.state() == QLocalSocket.LocalSocketState.ConnectedState:
+            self._ipc_socket.write(f"FOCUS_MODE\t{int(enabled)}\n".encode("utf-8"))
+            self._ipc_socket.flush()
+        elif self._cfg is not None:
+            self._cfg.load()
+            self._cfg.set("focus_mode", enabled)
+            self._cfg.save()
+
+    def _apply_focus_mode(self, enabled: bool):
+        if enabled == self._focus_mode:
+            return
+        self._focus_mode = enabled
+        if self._cfg is not None:
+            self._cfg.set("focus_mode", enabled)
+        self._ambient_chat_manager.set_paused(enabled)
+        self._note_user_interaction()
+        if enabled and self._ambient_speech_generation == self._tts_generation:
+            self._tts_generation += 1
+            self._pending_ambient_entry = None
+            self._ambient_speech_generation = None
+            if self._tts_player is not None:
+                self._tts_player.stop()
+            self._speech_bubble.hide()
+        self._refresh_focus_mode_row()
+
     def _open_chat(self):
+        self._clear_active_story()
         if self._chat_process is not None and self._chat_process.state() != QProcess.ProcessState.NotRunning:
             return
 
@@ -2966,6 +3135,10 @@ class PetWindow(QWidget):
                 self._switch_model(parts[1], parts[2])
         elif line == "RESET_POSITION":
             self._reset_position_to_center()
+        elif line in ("FOCUS_MODE\t0", "FOCUS_MODE\t1"):
+            self._apply_focus_mode(line.endswith("\t1"))
+        elif line == "TRIGGER_STORY":
+            self._force_trigger_ambient_story()
         elif line == "SHUTDOWN":
             self._quit()
 
@@ -3161,7 +3334,7 @@ class PetWindow(QWidget):
     def _on_bubble_character_typed(self, ch: str):
         if self._pixel_mode or self._live2d_widget is None:
             return
-        if self._tts_player is not None and getattr(self._tts_player, "is_playing", False):
+        if self._tts_player is not None and not self._tts_player.is_idle():
             return
         if not ch or ch in " \t\r\n，。！？、…—～“”‘’\"'.,!?;:()[]{}":
             return
@@ -3171,11 +3344,13 @@ class PetWindow(QWidget):
     def _on_bubble_typing_finished(self):
         if self._pixel_mode or self._live2d_widget is None:
             return
-        if self._tts_player is not None and getattr(self._tts_player, "is_playing", False):
+        if self._tts_player is not None and not self._tts_player.is_idle():
             return
         self._live2d_widget.set_lip_sync_level(0.0)
 
     def _check_ambient_proactive_thought(self):
+        if getattr(self, "_focus_mode", False):
+            return
         if not self.isVisible() or self._is_pet_dragging():
             return
         if self._cfg and not self._cfg.get("ambient_proactive_chat_enabled", True):
@@ -3183,6 +3358,8 @@ class PetWindow(QWidget):
         if self._radial_menu is not None and self._radial_menu.isVisible():
             return
         if self._speech_bubble is not None and self._speech_bubble.isVisible():
+            return
+        if self._active_story_queue or self._ambient_speech_busy():
             return
         now = time.monotonic()
         idle_seconds = now - self._last_user_interaction_at
@@ -3192,6 +3369,8 @@ class PetWindow(QWidget):
             return
 
         dynamic_entry = self._ambient_chat_manager.pop_ambient_entry(self._current_char)
+        if dynamic_entry is None and self._ambient_chat_manager.has_scheduled_story(self._current_char):
+            return
         if dynamic_entry is not None:
             # Stale context guard: discard entries whose foreground context
             # has changed significantly since prefetch (e.g. user switched
@@ -3225,116 +3404,161 @@ class PetWindow(QWidget):
             else:
                 return
 
-        self._last_ambient_proactive_spoken_at = now
+        self._start_ambient_entry_delivery(entry)
+
+    def _start_ambient_entry_delivery(self, entry: dict):
+        """Queue a prepared story or deliver a standalone ambient thought."""
+        if getattr(self, "_focus_mode", False):
+            return
+        is_story = entry.get("is_story")
+        segments = entry.get("segments", []) if is_story else []
+        if is_story and (not 2 <= len(segments) <= 4 or not all(seg.get("audio_bytes") for seg in segments)):
+            return
+        self._last_ambient_proactive_spoken_at = time.monotonic()
         self._ambient_proactive_cooldown_seconds = random.uniform(900.0, 1500.0)
+        if is_story:
+            motion_names = self._current_motion_names()
+            fallback_motion = self._resolve_motion_tag("natural01", motion_names)
+            if not fallback_motion and motion_names:
+                fallback_motion = self._choose_click_action_motion("body")
+            self._active_story_queue = [
+                dict(segment, motion=self._resolve_motion_tag(segment.get("motion") or "", motion_names) or fallback_motion)
+                for segment in segments
+            ]
+            self._play_prepared_story_segment(self._active_story_queue.pop(0))
+            return
 
         self._deliver_ambient_proactive_entry(entry)
 
-    def _deliver_ambient_proactive_entry(self, entry: dict):
-        """Deliver proactive thought using Scheme B (ready-to-speak presentation):
-        Wait silently until TTS audio is synthesized before popping the speech bubble,
-        achieving true zero-latency synchronized audio and speech bubble entrance.
-        """
-        text = entry.get("text", "")
-        motion = entry.get("motion", "")
-        expression = entry.get("expression", "")
-        tts_text = entry.get("tts_text", text)
-        if not text:
+    def _force_trigger_ambient_story(self):
+        """Request a voiced story from the tray."""
+        if self._focus_mode:
             return
+        self._note_user_interaction()
+        self._ambient_chat_manager.request_story(self._current_char)
 
-        # Case 0: Pre-generated audio from ambient prefetch (OpenAI TTS)
-        pre_audio = entry.get("audio_bytes")
-        pre_format = entry.get("audio_format", "mp3")
-        if pre_audio and len(pre_audio) > 100:
-            self._ensure_tts_player()
-            anchor = self._pet_bubble_anchor()
-            if motion or expression:
-                self._start_click_motion(motion, expression)
-            self._speech_bubble.show_text(text, anchor)
-            if self._tts_player is not None:
-                self._tts_player.enqueue(pre_audio, pre_format)
+    def _on_manual_story_status(self, character: str, stage: str, current: int, total: int):
+        if self._focus_mode:
             return
-
-        # Case 1: TTS is not enabled or worker unavailable -> pop bubble immediately
-        if not self._tts_enabled() or not _CachedTTSRequestWorker:
-            anchor = self._pet_bubble_anchor()
-            if motion or expression:
-                self._start_click_motion(motion, expression)
-            self._speech_bubble.show_text(text, anchor)
+        if character != self._current_char or not self.isVisible():
             return
+        messages = {
+            "pending": ("story_not_ready", "故事还没准备好，稍等一下～"),
+            "text": ("story_writing", "我正在写故事，稍等一下～"),
+            "audio": ("story_audio_progress", "正在准备第 {current}/{total} 段语音…"),
+            "text_failed": ("story_text_failed", "故事没写成，请检查 AI 接口后再试。"),
+            "audio_failed": ("story_audio_failed", "故事语音没准备好，请检查 TTS 服务后再试。"),
+        }
+        key, fallback = messages[stage]
+        text = _tr(f"PetWindow.{key}", fallback, current=current, total=total)
+        display_ms = 5000 if stage.endswith("_failed") else 3000
+        self._speech_bubble.show_text(text, self._pet_bubble_anchor(), display_ms, typewriter=False)
 
-        is_pretranslated = bool(tts_text and tts_text != text)
-        spoken_text = tts_text if is_pretranslated else text
-        clean = (_strip_tts_action_tags or strip_tts_action_tags)(spoken_text)
-        if not clean:
-            anchor = self._pet_bubble_anchor()
-            if motion or expression:
-                self._start_click_motion(motion, expression)
-            self._speech_bubble.show_text(text, anchor)
+    def _on_manual_story_ready(self, character: str, entry: dict):
+        if self._focus_mode:
             return
-
-        config = self._tts_config_snapshot()
-        if is_pretranslated:
-            config["tts_language"] = "Japanese"
-            config["tts_translate_to_selected_language"] = False
-        char = self._current_char or ""
-        cache_path = _tts_cache_path(clean, char, config) if _tts_cache_path else None
-
-        # Case 2: Cache hit -> audio already exists on disk, pop bubble and play simultaneously
-        if cache_path is not None and cache_path.exists() and cache_path.stat().st_size > 44:
-            anchor = self._pet_bubble_anchor()
-            if motion or expression:
-                self._start_click_motion(motion, expression)
-            self._speech_bubble.show_text(text, anchor)
-            self._speak_pet_text(text, entry.get("tts_text", text))
+        if character != self._current_char or not self.isVisible() or self._is_pet_dragging():
             return
+        self._clear_active_story()
+        self._tts_generation += 1
+        if self._tts_player is not None:
+            self._tts_player.stop()
+        self._start_ambient_entry_delivery(entry)
 
-        # Case 3: Cache miss -> Silent background synthesis (Scheme B)
-        # Pet remains completely silent and still until audio is ready
+    def _play_prepared_story_segment(self, segment: dict):
         self._ensure_tts_player()
+        audio = segment["audio_bytes"]
+        media_type = segment.get("audio_format", "wav")
+        if self._tts_player is None or not self._tts_player.enqueue(audio, media_type):
+            self._clear_active_story()
+            return
+        self._ambient_speech_generation = self._tts_generation
+        self._start_click_motion(segment["motion"], segment.get("expression", ""))
+        self._speech_bubble.show_text(segment["text"], self._pet_bubble_anchor())
+
+    def _on_pet_tts_playback_finished(self):
+        self._ambient_speech_generation = None
+        if not getattr(self, "_pixel_mode", False) and getattr(self, "_live2d_widget", None) is not None:
+            self._live2d_widget.set_lip_sync_level(0.0)
+        self._deliver_next_story_segment()
+
+    def _on_pet_tts_level_changed(self, level: float):
+        if not getattr(self, "_pixel_mode", False) and getattr(self, "_live2d_widget", None) is not None:
+            self._live2d_widget.set_lip_sync_level(level)
+
+    def _ambient_speech_busy(self) -> bool:
+        if self._tts_player is not None and not self._tts_player.is_idle():
+            return True
+        return self._active_speech_worker is not None and self._active_speech_worker.isRunning()
+
+    def _deliver_next_story_segment(self):
+        if not self._active_story_queue:
+            return
+        if not self.isVisible() or self._is_pet_dragging():
+            self._clear_active_story()
+            return
+        if self._radial_menu is not None and self._radial_menu.isVisible():
+            self._clear_active_story()
+            return
+
+        self._play_prepared_story_segment(self._active_story_queue.pop(0))
+        if not self._active_story_queue:
+            self._last_ambient_proactive_spoken_at = time.monotonic()
+            self._ambient_proactive_cooldown_seconds = random.uniform(900.0, 1500.0)
+
+    def _clear_active_story(self):
+        self._active_story_queue.clear()
+
+    def _deliver_ambient_proactive_entry(self, entry: dict):
+        """Show the ambient bubble when its audio is enqueued for playback."""
+        if getattr(self, "_focus_mode", False) or not entry.get("text"):
+            return
+
+        audio = entry.get("audio_bytes")
+        if audio:
+            self._play_ambient_entry(entry, audio, entry.get("audio_format", "mp3"))
+            return
+        if not self._tts_enabled():
+            self._show_ambient_entry(entry)
+            return
+
+        clean, config = self._pet_tts_request(entry["text"], entry.get("tts_text"))
+        if not clean or not _CachedTTSRequestWorker:
+            return
         self._tts_generation += 1
         generation = self._tts_generation
-
+        self._pending_ambient_entry = entry
+        self._ambient_speech_generation = generation
         worker = _CachedTTSRequestWorker(
-            generation, generation, clean, char, config, play_when_ready=False, parent=self
+            generation, generation, clean, self._current_char, config, play_when_ready=True, parent=self,
         )
-
-        delivered = False
-
-        def _on_ambient_audio_ready(seq: int, gen: int, audio: bytes, media_type: str):
-            nonlocal delivered
-            if delivered or gen != self._tts_generation:
-                return
-            delivered = True
-            if not self.isVisible():
-                return
-            anchor = self._pet_bubble_anchor()
-            if motion or expression:
-                self._start_click_motion(motion, expression)
-            self._speech_bubble.show_text(text, anchor)
-            if self._tts_player is not None:
-                self._tts_player.enqueue(audio, media_type)
-
-        def _on_ambient_fallback(reason: str):
-            nonlocal delivered
-            if delivered or generation != self._tts_generation:
-                return
-            delivered = True
-            print(f"[ambient proactive] TTS delayed or failed ({reason}), falling back to visual bubble")
-            if self.isVisible():
-                anchor = self._pet_bubble_anchor()
-                if motion or expression:
-                    self._start_click_motion(motion, expression)
-                self._speech_bubble.show_text(text, anchor)
-
-        worker.audio_ready.connect(_on_ambient_audio_ready)
-        worker.error.connect(lambda msg: _on_ambient_fallback(f"error: {msg}"))
+        worker.audio_ready.connect(self._on_ambient_audio_ready)
+        worker.error.connect(self._on_pet_tts_error)
         worker.finished.connect(lambda w=worker: self._on_pet_tts_worker_finished(w))
         self._active_speech_worker = worker
         worker.start()
 
-        # Timeout guard: 12 seconds max waiting time for remote TTS
-        QTimer.singleShot(12000, lambda: _on_ambient_fallback("timeout > 12s"))
+    @Slot(int, int, bytes, str)
+    def _on_ambient_audio_ready(self, sequence: int, generation: int, audio: bytes, media_type: str):
+        if generation != self._tts_generation or self._focus_mode:
+            return
+        entry = self._pending_ambient_entry
+        self._pending_ambient_entry = None
+        if entry is not None and self.isVisible():
+            self._play_ambient_entry(entry, audio, media_type)
+
+    def _play_ambient_entry(self, entry: dict, audio: bytes, media_type: str):
+        self._ensure_tts_player()
+        if self._tts_player is not None and self._tts_player.enqueue(audio, media_type):
+            self._ambient_speech_generation = self._tts_generation
+            self._show_ambient_entry(entry)
+
+    def _show_ambient_entry(self, entry: dict):
+        motion = entry.get("motion", "")
+        expression = entry.get("expression", "")
+        if motion or expression:
+            self._start_click_motion(motion, expression)
+        self._speech_bubble.show_text(entry["text"], self._pet_bubble_anchor())
 
     def _compact_window_target(self):
         bounds = None
@@ -3482,9 +3706,30 @@ class PetWindow(QWidget):
         mapped = tag_map.get(normalized, normalized)
 
         is_shy_action = (mapped == "shy" or normalized in {"shy", "chomama", "tere", "tsundere_shy"})
+        motion_started = False
+        has_chain = False
+
         if is_shy_action:
-            motion = _find_motion("shy") or _find_motion("shame") or _find_motion("pui") or _find_motion("odoodo") or _find_motion("smile")
-            shy_params = {
+            # Check for 2-stage action linkage (Stage 1: shame02 defensive recoil -> Stage 2: shame01 blushing demure)
+            def _find_specific_motion(candidates: list[str]) -> str | None:
+                for cand in candidates:
+                    cand_prefix = f"{char_lower}_{cand}"
+                    for mname in motion_names:
+                        mlow = mname.lower()
+                        mbase = os.path.splitext(mlow)[0]
+                        if mlow == cand or mbase == cand or mlow.startswith(f"{cand}."):
+                            return mname
+                        if mlow == cand_prefix or mbase == cand_prefix or mlow.startswith(f"{cand_prefix}."):
+                            return mname
+                        if re.search(rf"(^|[_\-]){re.escape(cand)}($|[_\-]?\d)", mlow):
+                            return mname
+                return None
+
+            stage1_motion = _find_specific_motion(["shame02", "shame_02", "shame2"])
+            stage2_motion = _find_specific_motion(["shame01", "shame_01", "shame1"]) or _find_motion("shy")
+            has_chain = bool(stage1_motion and stage2_motion and stage1_motion != stage2_motion)
+
+            shy_stage2_params = {
                 "PARAM_EYE_L_OPEN": 0.0,
                 "PARAM_EYE_R_OPEN": 0.0,
                 "PARAM_EYE_L_SMILE": 1.0,
@@ -3500,19 +3745,72 @@ class PetWindow(QWidget):
                 "PARAM_MOUTH_FORM_01": -1.0,
                 "PARAM_MOUTH_SCALE": -0.3,
             }
-            if hasattr(model, "SetParameterValue"):
-                for pid, val in shy_params.items():
-                    model.SetParameterValue(pid, val, 1.0)
-                if not hasattr(self, "_custom_action_params"):
-                    self._custom_action_params = set()
-                self._custom_action_params.update(shy_params.keys())
-                self._custom_action_param_token = getattr(self, "_custom_action_param_token", 0) + 1
-                token = self._custom_action_param_token
-                QTimer.singleShot(4200, lambda t=token: self._clear_custom_action_parameters_if_current(t))
+
+            if has_chain:
+                self._action_chain_token = getattr(self, "_action_chain_token", 0) + 1
+                chain_token = self._action_chain_token
+                self._motion_guard_token += 1
+                stage1_token = self._motion_guard_token
+
+                stage1_params = {
+                    "PARAM_EYE_L_OPEN": 1.25,
+                    "PARAM_EYE_R_OPEN": 1.25,
+                    "PARAM_EYE_L_SMILE": 0.0,
+                    "PARAM_EYE_R_SMILE": 0.0,
+                    "PARAM_BROW_L_ANGLE": 0.35,
+                    "PARAM_BROW_R_ANGLE": 0.35,
+                    "PARAM_BROW_L_FORM": -0.5,
+                    "PARAM_BROW_R_FORM": -0.5,
+                    "PARAM_BROW_L_Y": -0.3,
+                    "PARAM_BROW_R_Y": -0.3,
+                    "PARAM_CHEEK": 0.85,
+                    "PARAM_CHEEK2": 0.85,
+                    "PARAM_MOUTH_FORM_01": -0.8,
+                    "PARAM_MOUTH_SCALE": -0.1,
+                }
+
+                try:
+                    model.StartMotion(
+                        stage1_motion,
+                        0,
+                        self._live2d.MotionPriority.FORCE,
+                    )
+                    motion_started = True
+                except Exception:
+                    motion_started = False
+
+                if hasattr(model, "SetParameterValue"):
+                    for pid, val in stage1_params.items():
+                        model.SetParameterValue(pid, val, 1.0)
+                    if not hasattr(self, "_custom_action_params"):
+                        self._custom_action_params = set()
+                    self._custom_action_params.update(stage1_params.keys())
+                    self._custom_action_param_token = getattr(self, "_custom_action_param_token", 0) + 1
+                    param_token = self._custom_action_param_token
+                    QTimer.singleShot(6500, lambda t=param_token: self._clear_custom_action_parameters_if_current(t))
+
+                # Transition to Stage 2 after 2000ms (climax of defensive panic recoil)
+                QTimer.singleShot(
+                    2000,
+                    lambda c=chain_token, m=stage1_token: self._execute_chained_action_stage2(
+                        c, m, stage2_motion, shy_stage2_params
+                    ),
+                )
+            else:
+                motion = stage2_motion or stage1_motion or _find_motion("shy") or _find_motion("shame") or _find_motion("pui") or _find_motion("odoodo") or _find_motion("smile")
+                if hasattr(model, "SetParameterValue"):
+                    for pid, val in shy_stage2_params.items():
+                        model.SetParameterValue(pid, val, 1.0)
+                    if not hasattr(self, "_custom_action_params"):
+                        self._custom_action_params = set()
+                    self._custom_action_params.update(shy_stage2_params.keys())
+                    self._custom_action_param_token = getattr(self, "_custom_action_param_token", 0) + 1
+                    token = self._custom_action_param_token
+                    QTimer.singleShot(4200, lambda t=token: self._clear_custom_action_parameters_if_current(t))
         else:
             motion = _find_motion(mapped)
-        motion_started = False
-        if motion:
+
+        if not motion_started and motion:
             self._expression_guard_token += 1
             try:
                 self._motion_guard_token += 1
@@ -3548,7 +3846,7 @@ class PetWindow(QWidget):
                     self._schedule_default_expression_restore(delay_ms=4000 if is_shy_action else 3000)
             except Exception:
                 pass
-        elif is_shy_action:
+        elif is_shy_action and not has_chain:
             self._schedule_default_expression_restore(delay_ms=4000)
 
     def _on_radial_costume(self):
@@ -3713,19 +4011,29 @@ class PetWindow(QWidget):
             return
         self._tts_player = _TTSPlayer(self)
         self._tts_player.error.connect(self._on_pet_tts_error)
+        self._tts_player.playback_finished.connect(self._on_pet_tts_playback_finished)
+        self._tts_player.level_changed.connect(self._on_pet_tts_level_changed)
         if self._cfg:
             try:
                 self._tts_player.set_volume(float(self._cfg.get("tts_volume", 0.7)))
             except (TypeError, ValueError):
                 pass
 
+    def _pet_tts_request(self, text: str, tts_text: str | None) -> tuple[str, dict]:
+        """Prepare the same text and options for cache lookup and playback."""
+        is_pretranslated = bool(tts_text and tts_text != text)
+        spoken_text = tts_text if is_pretranslated else text
+        config = self._tts_config_snapshot()
+        if is_pretranslated:
+            config["tts_language"] = "Japanese"
+            config["tts_translate_to_selected_language"] = False
+        return (_strip_tts_action_tags or strip_tts_action_tags)(spoken_text), config
+
     def _speak_pet_text(self, text: str, tts_text: str | None = None):
         """Request TTS for a pet bubble text, with caching."""
         if not self._tts_enabled():
             return
-        is_pretranslated = bool(tts_text and tts_text != text)
-        spoken_text = tts_text if is_pretranslated else text
-        clean = (_strip_tts_action_tags or strip_tts_action_tags)(spoken_text)
+        clean, config = self._pet_tts_request(text, tts_text)
         if not clean:
             return
         self._ensure_tts_player()
@@ -3735,12 +4043,10 @@ class PetWindow(QWidget):
         self._tts_player.stop()
         # Bump generation so any in-flight worker results are discarded
         self._tts_generation += 1
-        config = self._tts_config_snapshot()
-        if is_pretranslated:
-            config["tts_language"] = "Japanese"
-            config["tts_translate_to_selected_language"] = False
         char = self._current_char or ""
         generation = self._tts_generation
+        self._pending_ambient_entry = None
+        self._ambient_speech_generation = None
         worker = _CachedTTSRequestWorker(
             generation, generation, clean, char, config, play_when_ready=True, parent=self,
         )
@@ -3755,7 +4061,7 @@ class PetWindow(QWidget):
         if not self._tts_enabled() or not _CachedTTSRequestWorker:
             return
         text = entry.get("text", "")
-        if not text:
+        if not text or entry.get("audio_bytes"):
             return
         config = self._tts_config_snapshot()
         tts_text = entry.get("tts_text", "")
@@ -3790,6 +4096,9 @@ class PetWindow(QWidget):
         """Clean up finished workers."""
         if worker is self._active_speech_worker:
             self._active_speech_worker = None
+            if self._pending_ambient_entry is not None and worker.generation == self._tts_generation:
+                self._pending_ambient_entry = None
+                self._ambient_speech_generation = None
         try:
             if worker in self._tts_prewarm_workers:
                 self._tts_prewarm_workers.remove(worker)
@@ -3807,7 +4116,8 @@ class PetWindow(QWidget):
         if not _CachedTTSRequestWorker:
             return
         greetings = self._load_greetings()
-        items = (_collect_greeting_tts_items or _collect_greeting_tts_lines)(greetings)
+        char = self._current_char or ""
+        items = (_collect_greeting_tts_items or _collect_greeting_tts_lines)(greetings, char)
         if items and isinstance(items[0], str):
             items = [(line, False) for line in items]
         if not items:
@@ -3831,6 +4141,13 @@ class PetWindow(QWidget):
     def _prewarm_next_line(self, items: list, idx: int, char: str, config: dict):
         """Process the next prewarm line (or stop if at end)."""
         if idx >= len(items):
+            return
+        if (
+            (self._active_speech_worker is not None and self._active_speech_worker.isRunning())
+            or (self._tts_player is not None and not self._tts_player.is_idle())
+            or (_is_interactive_tts_busy is not None and _is_interactive_tts_busy(config))
+        ):
+            QTimer.singleShot(2000, lambda: self._prewarm_next_line(items, idx, char, config))
             return
         text, pretranslated = items[idx]
         request_config = dict(config)
@@ -3858,6 +4175,38 @@ class PetWindow(QWidget):
         # Chain to next line with a small delay to avoid flooding the server
         QTimer.singleShot(500, lambda: self._prewarm_next_line(items, idx + 1, char, config))
 
+    def _execute_chained_action_stage2(self, chain_token: int, motion_token: int, stage2_motion: str, stage2_params: dict):
+        if chain_token != getattr(self, "_action_chain_token", 0) or motion_token != self._motion_guard_token:
+            return
+        model = self._live2d_widget.model if self._live2d_widget else None
+        if model is None:
+            return
+        self._motion_guard_token += 1
+        token = self._motion_guard_token
+        try:
+            model.StartMotion(
+                stage2_motion,
+                0,
+                self._live2d.MotionPriority.FORCE,
+                onFinishMotionHandler=self._on_motion_finished,
+            )
+        except Exception:
+            return
+
+        if hasattr(model, "SetParameterValue") and stage2_params:
+            for pid, val in stage2_params.items():
+                model.SetParameterValue(pid, val, 1.0)
+            if not hasattr(self, "_custom_action_params"):
+                self._custom_action_params = set()
+            self._custom_action_params.update(stage2_params.keys())
+            self._custom_action_param_token = getattr(self, "_custom_action_param_token", 0) + 1
+            param_token = self._custom_action_param_token
+            QTimer.singleShot(4200, lambda t=param_token: self._clear_custom_action_parameters_if_current(t))
+
+        QTimer.singleShot(8000, lambda t=token: self._clear_motion_if_current(t))
+        QTimer.singleShot(1800, lambda t=token: self._restore_default_if_finished(t))
+        self._schedule_default_expression_restore(delay_ms=4200)
+
     def _on_motion_finished(self, *_args):
         self._motion_guard_token += 1
         QTimer.singleShot(0, lambda t=self._motion_guard_token: self._restore_default_motion(t, force_clear=False))
@@ -3869,6 +4218,7 @@ class PetWindow(QWidget):
         QTimer.singleShot(0, lambda t=self._motion_guard_token: self._restore_default_motion(t, force_clear=True))
 
     def _clear_custom_action_parameters(self):
+        self._action_chain_token = getattr(self, "_action_chain_token", 0) + 1
         if not getattr(self, "_custom_action_params", None):
             return
         model = self._live2d_widget.model if self._live2d_widget else None

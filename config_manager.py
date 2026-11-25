@@ -188,6 +188,8 @@ DEFAULTS = {
     "tts_character_profiles": {},
     "tts_volume": 0.7,
     "tts_translate_to_selected_language": True,
+    "tts_gpt_sovits_root": "D:/BANDORI-GPT-SoVITS" if os.path.isdir("D:/BANDORI-GPT-SoVITS") else "",
+    "tts_gpt_sovits_runtime": "D:/BANDORI-GPT-SoVITS/GPT-SoVITS-v2-240821" if os.path.isdir("D:/BANDORI-GPT-SoVITS/GPT-SoVITS-v2-240821") else "",
     "media_overlay_enabled": True,
     "media_control_style": "sakura",
     "weather_enabled": False,
@@ -196,13 +198,19 @@ DEFAULTS = {
     "weather_project_id": "",
     "weather_api_host": "",
     "weather_city": "",
+    "focus_mode": False,
     "ambient_tts_provider": "off",
+    "ambient_story_mode_enabled": True,
+    "ambient_story_probability": 0.30,
     "openai_tts_api_url": "",
     "openai_tts_api_key": "",
     "openai_tts_voice": "alloy",
     "openai_tts_model": "tts-1",
     "openai_tts_speed": 1.0,
 }
+
+DEFAULT_CONFIG = DEFAULTS
+
 
 MODEL_DEFAULTS = {
     "window_x": -1,

@@ -1,13 +1,24 @@
+import io
+import json
 import pathlib
+import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
+import numpy as np
+import soundfile as sf
+
+import tts_manager
 from tts_manager import (
     TTSRequestWorker,
     _build_translation_system_prompt,
     _find_referenced_characters,
     _gpt_sovits_model_paths,
     _gpt_sovits_payload,
+    _iter_wav_stream_chunks,
+    _pcm_to_wav_bytes,
+    _select_gpt_sovits_split_params,
     _tts_api_language_code,
     collect_greeting_tts_items,
     _tts_lock,
@@ -34,6 +45,26 @@ class GPTSoVITSTest(unittest.TestCase):
         self.assertNotIn("要乐奈", _find_referenced_characters("你要好好休息。"))
         self.assertIn("要乐奈", _find_referenced_characters("乐奈今天很有精神。"))
 
+    def test_japanese_translation_prompt_enforces_bandori_katakana_for_bands(self):
+        prompt = _build_translation_system_prompt(
+            "日语",
+            "Hello,Happy,World和Roselia今天的演出太棒了！",
+            "kokoro",
+        )
+
+        self.assertIn("ハロー、ハッピーワールド！", prompt)
+        self.assertIn("ロゼリア", prompt)
+        self.assertIn("严禁保留英文拼写", prompt)
+        self.assertIn("Term Japanese Speech Reference", prompt)
+
+    def test_bandori_term_matcher_respects_word_boundaries(self):
+        matched_terms = dict(tts_manager._find_referenced_bandori_terms("Hello,Happy,World在CiRCLE演出"))
+        self.assertIn("Hello, Happy World!", matched_terms)
+        self.assertIn("CiRCLE", matched_terms)
+        unrelated = dict(tts_manager._find_referenced_bandori_terms("stay alive and bring a ring"))
+        self.assertNotIn("LIVE", unrelated)
+        self.assertNotIn("NFO", unrelated)
+
     def test_builds_standard_remote_model_paths(self):
         paths = _gpt_sovits_model_paths("kaoru", {})
 
@@ -49,6 +80,22 @@ class GPTSoVITSTest(unittest.TestCase):
             paths["reference"],
             "/home/kirby/minecraft/bandori-tts/audio_reference_wav/kaoru.wav",
         )
+
+    def test_builds_local_model_paths_with_smart_discovery(self):
+        paths = _gpt_sovits_model_paths("arisa", {"tts_gpt_sovits_root": "D:/BANDORI-GPT-SoVITS"})
+        self.assertTrue(paths["gpt"].endswith("/arisa-e15.ckpt"))
+        self.assertTrue(paths["sovits"].endswith("/arisa_e15_s10815.pth"))
+        self.assertTrue(paths["reference"].endswith(("/arisa.wav", "/arisa.mp3")))
+
+    def test_prefers_wav_reference_audio_over_mp3_when_available(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            wav_dir = root / "audio_reference_wav"
+            wav_dir.mkdir(parents=True)
+            (wav_dir / "arisa.wav").write_bytes(b"RIFF" + b"\x00" * 64)
+            with patch.object(tts_manager, "app_base_dir", return_value=root):
+                paths = _gpt_sovits_model_paths("arisa", {"tts_gpt_sovits_root": str(root)})
+            self.assertEqual(paths["reference"], str(wav_dir / "arisa.wav").replace("\\", "/"))
 
     def test_builds_special_case_remote_model_paths(self):
         cases = {
@@ -293,6 +340,157 @@ class TtsLockTest(unittest.TestCase):
 
     def test_worker_has_generate_audio_bytes_method(self):
         self.assertTrue(callable(getattr(TTSRequestWorker, "_generate_audio_bytes", None)))
+
+
+class TtsSpeedOptimizationTest(unittest.TestCase):
+    def test_short_sentence_uses_cut0_without_batching(self):
+        self.assertEqual(_select_gpt_sovits_split_params("なるほど、「愛してる」ってことね。", streaming=True), ("cut0", 1))
+        self.assertEqual(_select_gpt_sovits_split_params("なるほど、「愛してる」ってことね。", streaming=False), ("cut0", 1))
+
+    def test_long_text_uses_cut2_and_batch_when_non_streaming(self):
+        long_text = "あ" * 65
+        self.assertEqual(_select_gpt_sovits_split_params(long_text, streaming=True), ("cut2", 1))
+        self.assertEqual(_select_gpt_sovits_split_params(long_text, streaming=False), ("cut2", 4))
+
+    def test_iter_wav_stream_chunks_wraps_raw_pcm_across_odd_boundaries(self):
+        sample_rate = 32000
+        pcm = (np.arange(3000, dtype=np.int16) * 3).tobytes()
+        empty_header = _pcm_to_wav_bytes(b"", sample_rate=sample_rate, channels=1, sample_width=2)
+        stream_bytes = empty_header + pcm
+        # Split into odd-sized chunks to verify header & 2-byte sample framing
+        fragments = [
+            stream_bytes[:17],
+            stream_bytes[17:45],
+            stream_bytes[45:4150],
+            stream_bytes[4150:],
+        ]
+
+        class FakeStreamResponse:
+            def iter_content(self, chunk_size=None):
+                del chunk_size
+                return iter(fragments)
+
+            def close(self):
+                pass
+
+        wav_chunks = list(_iter_wav_stream_chunks(FakeStreamResponse(), min_chunk_bytes=2048))
+        self.assertGreaterEqual(len(wav_chunks), 2)
+
+        decoded = []
+        for chunk in wav_chunks:
+            data, sr = sf.read(io.BytesIO(chunk), dtype="int16")
+            self.assertEqual(sr, sample_rate)
+            decoded.append(data)
+        reconstructed = np.concatenate(decoded).tobytes()
+        self.assertEqual(reconstructed, pcm)
+
+    def test_ensure_weights_skips_reload_when_local_yaml_matches(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = pathlib.Path(tmp) / "runtime"
+            cfg_dir = runtime / "GPT_SoVITS" / "configs"
+            cfg_dir.mkdir(parents=True)
+            gpt = f"{tmp}/arisa-e15.ckpt".replace("\\", "/")
+            sovits = f"{tmp}/arisa_e15_s10815.pth".replace("\\", "/")
+            (cfg_dir / "bandoripet_local.yaml").write_text(
+                "custom:\n"
+                "  device: cuda\n"
+                f"  t2s_weights_path: {gpt}\n"
+                f"  vits_weights_path: {sovits}\n",
+                encoding="utf-8",
+            )
+            url = f"http://127.0.0.1:9880/{abs(hash(tmp))}/"
+            worker = TTSRequestWorker(
+                0,
+                0,
+                "hello",
+                "arisa",
+                {"tts_api_url": url, "tts_gpt_sovits_runtime": str(runtime)},
+            )
+            with (
+                patch.object(tts_manager, "_current_gpt_sovits_weights", None),
+                patch.object(worker, "_set_gpt_sovits_weight") as mock_set,
+            ):
+                worker._ensure_gpt_sovits_weights({"gpt": gpt, "sovits": sovits})
+                mock_set.assert_not_called()
+
+    def test_ensure_weights_only_reloads_changed_component_across_processes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            url = f"http://127.0.0.1:9880/{abs(hash(tmp))}/"
+            worker = TTSRequestWorker(0, 0, "hello", "arisa", {"tts_api_url": url})
+            gpt_a = "/weights/a.ckpt"
+            sovits_a = "/weights/a.pth"
+            gpt_b = "/weights/b.ckpt"
+            tts_manager._write_tts_state_weights(url, gpt_a, sovits_a)
+            try:
+                with (
+                    patch.object(tts_manager, "_current_gpt_sovits_weights", None),
+                    patch.object(worker, "_set_gpt_sovits_weight") as mock_set,
+                ):
+                    worker._ensure_gpt_sovits_weights({"gpt": gpt_b, "sovits": sovits_a})
+                    mock_set.assert_called_once_with("set_gpt_weights", gpt_b)
+            finally:
+                _, state_path, _ = tts_manager._tts_ipc_paths(url)
+                state_path.unlink(missing_ok=True)
+
+    def test_streaming_worker_sends_cut0_and_streaming_mode_and_reuses_session(self):
+        sample_rate = 32000
+        pcm = (np.ones(2500, dtype=np.int16) * 7).tobytes()
+        stream_bytes = _pcm_to_wav_bytes(b"", sample_rate=sample_rate) + pcm
+        posts = []
+
+        class FakeResponse:
+            status_code = 200
+            content = b""
+
+            def iter_content(self, chunk_size=None):
+                del chunk_size
+                yield stream_bytes[:44]
+                yield stream_bytes[44:]
+
+            def close(self):
+                pass
+
+        class FakeSession:
+            def post(self, url, json=None, stream=False, timeout=300):
+                posts.append((url, json, stream, timeout))
+                return FakeResponse()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            url = f"http://127.0.0.1:9880/{abs(hash(tmp))}/"
+            tts_manager._write_tts_state_weights(url, "/w/g.ckpt", "/w/s.pth")
+            worker = TTSRequestWorker(
+                3,
+                9,
+                "你好呀，今天天气真好。",
+                "arisa",
+                {
+                    "tts_api_url": url,
+                    "tts_language": "Japanese",
+                    "tts_translate_to_selected_language": False,
+                    "tts_streaming": True,
+                    "tts_custom_weights": {
+                        "arisa": {"gpt": "/w/g.ckpt", "sovits": "/w/s.pth", "reference": "/w/r.wav"}
+                    },
+                },
+            )
+            emitted = []
+            worker.audio_ready.connect(lambda seq, gen, audio, fmt: emitted.append((seq, gen, audio, fmt)))
+            try:
+                with patch.object(tts_manager, "_get_tts_session", return_value=FakeSession()):
+                    worker.run()
+            finally:
+                _, state_path, _ = tts_manager._tts_ipc_paths(url)
+                state_path.unlink(missing_ok=True)
+
+        self.assertEqual(len(posts), 1)
+        self.assertTrue(posts[0][2])  # stream=True
+        self.assertEqual(posts[0][1]["text_split_method"], "cut0")
+        self.assertTrue(posts[0][1]["streaming_mode"])
+        self.assertEqual(len(emitted), 1)
+        self.assertEqual((emitted[0][0], emitted[0][1], emitted[0][3]), (3, 9, "wav"))
+        data, sr = sf.read(io.BytesIO(emitted[0][2]), dtype="int16")
+        self.assertEqual(sr, sample_rate)
+        self.assertEqual(data.tobytes(), pcm)
 
 
 if __name__ == "__main__":

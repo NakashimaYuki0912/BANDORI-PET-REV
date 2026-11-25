@@ -1692,6 +1692,12 @@ COMMON_RULES = (
     '\u201c*\u201d等符号进行任何中文的动作、神态或心理描写！'
     '动作只能且必须使用规定的纯英文标签（如[smile]）！'
     '单次对话只允许携带一个动作标签！'
+    '提到 BanG Dream! 乐队名、艺名或专有名词时，若使用日文回复或输出日文语音稿，'
+    '必须写成对应的日语片假名（如 Hello, Happy World! 写「ハロー、ハッピーワールド！」，'
+    'Roselia 写「ロゼリア」，Poppin\'Party 写「ポッピンパーティ」，Afterglow 写「アフターグロウ」，'
+    'Pastel＊Palettes 写「パステルパレット」，Morfonica 写「モルフォニカ」，'
+    'RAISE A SUILEN 写「レイズ・ア・スイレン」，MyGO!!!!! 写「マイゴ」，'
+    'Ave Mujica 写「アヴェ・ムジカ」，BanG Dream! 写「バンドリ！」），严禁保留英文拼写导致语音引擎按英语朗读。'
 )
 
 from process_utils import app_base_dir
